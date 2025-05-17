@@ -1,0 +1,204 @@
+General Medicine Discharge Summary
+Patient Name: [**PATIENT]
+DOB: 05/24/1950
+[**IDNUM]: [**HOSPITAL]
+Attending:
+[**DOCTOR], MD
+Date of Admission: 12/12/2020
+Date of Discharge: 12/19/20
+Diagnosis:
+Principal Problem:
+Fracture
+Resolved Problems:
+* No resolved hospital problems.
+*
+Procedures:
+Bedside Procedures:
+Orders Placed This Encounter
+Procedures
+~ Hospital follow-up to orthopaedics
+~ Hospital follow-up with primary care provider
+Hospital Course:
+[**PATIENT] is a [**AGE] year old male with PMH most significant for OLT 04/2018 for decompensated cirrhosis in the setting of prior alcohol use disorder and alpha-1 antitrypsin heterozygosity, HLD, HTN, recurrent falls who presents with fall and L femoral fracture, now s/p L trochanteric femoral nailing with Ortho 11/23.
+Hospital course complicated by multiple vitamin/mineral deficiencies (D, C, folic acid, iron) and constipation.
+ 
+The patient fell at his home outside on 11/21.
+He was coming out of the bathroom and he says his legs felt weak.
+He fell onto his left side.
+Did not hit his head.
+Pain is a 5/10.
+Unable to ambulate.
+Started [**IDNUM] about 6 months ago.
+He broke his wrist from a fall 6 months ago.
+Does not get lightheaded when standing.
+Has about 1 fall a month.
+ 
+At OSH, afebrile, BP 156/61, HR 95, RR 20, SpO2 98%.
+Found to have L femur fracture on XR.
+UA with 4+ bacteria, 1+ leuk est, negative nitrite, 50-100 WBC.
+Given 1 g ceftriaxone.
+Transferred to [**HOSPITAL] for higher level of care.
+ 
+In the ED, T 100.2, BP 167/55, HR 94, RR 18, SpO2 99%.
+Labs notable for Hgb 10.3, plt 92, Cr 1.39, T bili 2.2, alk phos 92, AST 19, ALT 15, lactic acid 1.0, INR 1.6, CRP 43.3.
+UA large leuk est, small blood, negative nitrite, 165 WBC.
+XR pelvis with L intertrochanteric femur fracture and retraction of lesser trochanter avulsion fracture component.
+XR tibia/fibula without acute abnormality.
+CTH without acute abnormality.
+
+Received 50 mcg IV fentanyl.
+Evaluated by Ortho.
+Admitted to [**HOSPITAL] for further workup and management.
+Floor course:
+The following day the patient went to the OR with orthopedic surgery on 03/24 with left trochanteric femoral nailing.
+Patient came back to the medicine floor and was managed postop with intermittent doses of oxycodone scheduled Tylenol.
+Patient did well from this perspective.
+Given that the patient has a history of osteopenia and now has osteoporotic fracture, decision was made to start patient on bisphosphonate as an outpatient.
+Ultimately patient daughter reported that the patient has had more falls in the past 6 months.
+This was felt to be a mechanical fall.
+Was not able to do orthostatics given surgery and fracture but patient was noted to intermittently be borderline hypotensive and so his losartan was discontinued.
+Continued on his home amlodipine with better blood pressures.
+PT OT saw the patient and recommended inpatient rehab but patient's daughter would like for him to be close at home also will be going to SNF.
+Recommend starting Fosamax q.
+weekly.
+Can consider repeat DEXA scan in the future.
+Will remain on vitamin D and calcium supplementation.
+Hospital course complicated by constipation after surgery and narcotics.
+Bowel regimen was uptitrated and patient had multiple bowel movements.
+Kept on a daily MiraLAX and senna to be held if he has a bowel movement within 24 hours.
+Regarding his anemia, patient was found to be iron deficient.
+Also had low folic acid and this was supplemented.
+He was given back IV iron x2 this hospitalization.
+Additionally, patient was found to be vitmain c deficient as well.
+Patient was also thought to be vitamin K deficient given an INR value that was high and then down trended with vitamin K supplementation.
+His celiac panel was negative.
+He has [**DOCTOR] level that is pending.
+Additionally, patient's had some concerns about the patient's 
+cognitive status at home.
+A [**DOCTOR] was performed and patient scored 19/30, actually improved from previous 12 out of 30.
+Patient has good home support but may benefit from neurocognitive testing the outpatient setting.
+Patient was discharged in stable condition to local SNF.
+PT recommendations:
+PT Treatment Interventions: Bed Mobility Training, Transfer Training, Gait Training, Therapeutic Exercise, Posture Training, Transfer Balance Training, Gait Balance Training, Sustained Activity Training with Transfers and/or Gait, Patient/Family/Caregiver Education, Follow-up recommendations, [**DOCTOR] Training
+Treatment Frequency: 4x/wk
+Treatment focus: overall functional mobility, bilateral upper extremities, bilateral lower extremities, head, and trunk as appropriate
+To do:
+-Patient to attend PT/OT with SNF, f/u with orthopedics has been scheduled for 04/20.
+Would consider DVT ppx at SNF - have been giving Lovenox 40 mg daily in house.
+Per ortho, will need 21 days from surgery 11/13.
+-WC: per ortho, dressings changes as needed, okay to let water over wound and soap.
+-Fosfamax weekly, Vitamin C supp, Vitamin D supplementation, laxatives as needed, folic acid supplement
+-f/u with hepatology clinic has been requested
+-f/u [**DOCTOR]
+- would provide boost/nutrition high protein supplement
+Pending Investigations:
+Pending Labs
+Order Current Status
+Cyclosporine Lvl In process
+[**DOCTOR], Vitamin B12 Deficiency-ARUP In process
+Diagnostic Imaging Studies:
+X-ray humerus right
+Result Date: 12/13/2020
+Narrative: XR HUMERUS RIGHT TECHNIQUE: AP and lateral of the right humerus HISTORY: major traumatic injury COMPARISON: CT chest abdomen and pelvis 12/13/2020 FINDINGS: No concerning osseous lesion.
+Findings on comparison CT are secondary to artifact.
+Superior subluxation of the humeral head within the glenoid with chronic remodeling of the acromial undersurface, indicating chronic rotator cuff dysfunction.
+
+Electronically signed by
+[**DOCTOR], MD on 12/13/2020 5:16 AM
+X-ray femur left 2 views
+Result Date: 12/13/2020
+Narrative: LEFT FEMUR, 1:19 PM, 12/13/2020 REASON FOR EXAMINATION: pain FINDINGS: AP and lateral images show newly completed reduction and fixation of intertrochanteric fracture with IM nail, sliding cephalomedullary screw, and distal locking screw.
+Alignment is nearly anatomic.
+The construct is intact and fully engaged.
+There are no new abnormalities.
+Impression: No device complication or other new abnormality.
+Electronically signed by
+[**DOCTOR], MD on 12/13/2020 1:38 PM
+X-ray femur left 2 views
+Result Date: 12/13/2020
+Narrative: LEFT FEMUR AND THE PELVIS RADIOGRAPHS, 12/12/2020 11:29 PM.
+HISTORY: Upper leg trauma, initial exam.
+COMPARISON: None available .
+TECHNIQUE: AP and lateral, proximal and distal views of the LEFT FEMUR and AP view the pelvis were obtained.
+FINDINGS: Minimally displaced left intertrochanteric femur fracture.
+The lesser trochanter is avulsed and retracted proximally by the psoas tendon.
+No hip dislocation.
+There is soft tissue edema of the left hip.
+No pelvic fracture.
+No SI joint or pubic symphysis diastases.
+Degenerative changes of the included lower lumbar spine.
+Hemisacralization of the L5 vertebra on the right.
+The joint is aligned without significant degenerative change.
+Vascular calcifications.
+Impression: Left intertrochanteric femur fracture.
+Retraction of lesser trochanter avulsion fracture component.
+Electronically signed by [**DOCTOR], MD on 12/13/2020 12:15 AM I, [**DOCTOR], MD, have reviewed the images and verify the above interpretation on 12/13/2020 12:17 AM.
+Electronically signed by
+[**DOCTOR], MD on 12/13/2020 12:17 AM
+X-ray tibia fibula left 2 views
+Result Date: 12/13/2020
+Narrative: LEFT LOWER LEG RADIOGRAPHS, 12/12/2020 11:29 PM.
+HISTORY: Lower leg trauma, initial exam.
+COMPARISON: None available .
+TECHNIQUE: AP and lateral, 
+proximal and distal views of the LEFT LOWER leg were obtained.
+FINDINGS: [**DOCTOR] and screw fixation of the distal tibia and fibula.
+No suspicious perihardware lucency or hardware fracture.
+No fracture.
+Knee and ankle joint are aligned.
+Vascular calcifications.
+Diffuse subcutaneous changes reticular edema throughout the leg, presumably related to chronic venous stasis.
+Impression: No acute abnormality in the left leg.
+I, [**DOCTOR], MD, have reviewed the images and verify the above interpretation on 12/13/2020 12:25 AM.
+Electronically signed by
+[**DOCTOR], MD on 12/13/2020 12:25 AM
+CT chest without contrast
+Result Date: 12/11/2020
+Narrative: CT SCAN OF THE CHEST WITHOUT CONTRAST TECHNIQUE: Multidetector helical CT scan of the chest was performed without intravenous contrast administration.
+CLINICAL INFORMATION:[**DOCTOR] carcinoma, solitary pulmonary nodule DOSE INFORMATION:2123.05 (total dose) COMPARISON: CT chest for lung cancer screening 02/25/2020 FINDINGS: Lungs:
+No focal consolidation.
+Minimal dependent atelectasis noted bilaterally.
+Previously noted area of groundglass opacification and nodularity within the lateral segment right middle lobe has resolved.
+Redemonstration of scattered areas of tree-in-bud nodularity with adjacent groundglass opacity, unchanged prior examination.
+For example, within the peripheral right upper lobe (thin axial series 3 image 146).
+Previously noted micronodularity within the periphery of the left upper lobe remains unchanged.
+No new or enlarging pulmonary nodules or masses.
+Airways: Minimal debris noted within the trachea.
+Pleura:
+No pleural effusion or pneumothorax.
+Mediastinum: Calcified right paratracheal and right hilar lymph nodes indicative of prior granulomatous disease.
+Cardiovascular:
+Heart size is normal.
+Advanced atherosclerotic disease within the coronary arteries and thoracic aorta.
+Lower neck and chest wall: Thyroid gland is unremarkable.
+No 
+supraclavicular or axillary lymphadenopathy.
+Mild bilateral symmetric gynecomastia.
+Upper abdomen: Prior cholecystectomy.
+Prior liver transplant.
+Persistent splenomegaly with multiple enlarged collateral blood vessels in the left upper quadrant Bones: Moderate multilevel degenerative changes throughout the thoracic spine.
+Hypodensity within the left posterior lateral aspect of the L3 vertebral body extending to the pedicle.
+Impression: 1.
+No significant interval change since prior lung cancer screening CT dated 02/25/2020.
+The previously noted areas of tree-in-bud nodularity and scattered micronodularity remain unchanged.
+2.
+No evidence of metastatic disease within the chest.
+3.
+Postoperative findings status post prior liver transplant.
+Recommend correlation with CT of the abdomen completed the same day.
+Electronically signed by
+[**DOCTOR] on 12/11/2020 11:47 AM
+CT abdomen with and without contrast
+Result Date: 12/11/2020
+Narrative: CT OF THE ABDOMEN WITHOUT AND WITH IV CONTRAST REASON FOR STUDY/CLINICAL HISTORY: I81Portal vein thrombosis;Additional Information [H1ST]:->eval PVT stability after stopping AC and enhancing area on liver COMPARISON: CT abdomen 07/03/2020 TECHNIQUE: Axial CT images of the abdomen before and after the IV administration of contrast were obtained.
+Coronal and sagittal MPR images were also generated.
+Images through the abdomen were obtained in late arterial, portal venous, and delayed phases.
+INTRAVENOUS CONTRAST ADMINISTRATION: IV Contrast Dose is documented in the electronic medical record DOSE REPORT: Total DLP: 2017.79 mGycm FINDINGS: Lower thorax: Within normal limits Liver: *
+Status post orthotopic liver transplant.
+*
+No hypervascular lesions.
+Gallbladder/Biliary tree: Status post cholecystectomy.
+No biliary dilation.
+Spleen: Enlarged measuring 14.3 cm transaxially.
+Pancreas: Within normal limits Adrenals: Within normal limits Kidneys/Ureters: *
+Nonobstructing 3 mm
