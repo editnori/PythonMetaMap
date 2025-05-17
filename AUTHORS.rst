@@ -1,5 +1,0 @@
-============
-Contributors
-============
-
-* Dr. Layth Qassem
