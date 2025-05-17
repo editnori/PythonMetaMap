@@ -14,25 +14,28 @@ The flag <code>ismapping</code> is set to True if it is a mapping concept else i
 
 ## Installation
 
-<pre>
+Clone the repository and install the package in editable mode. Use the
+provided helper script to download and set up MetaMap 2020.
+
+```
 git clone https://github.com/smujjiga/pymm.git
 cd pymm
-python setup.py install
-</pre>
+pip install -e .
+python install_metamap.py  # downloads and installs MetaMap
+```
 
 
 ## Usage
-Create Python MetaMap wrapper object by pointing it to locaiton of MetaMap
 
-<pre>
-from pymm import Metamap
-mm = Metamap(METAMAP_PATH)
-</pre>
+After MetaMap is installed you can process a directory of text files using the
+`pymm-cli` tool:
 
-We can check if metamap is running using
-<pre>
-assert mm.is_alive()
-</pre>
+```
+pymm-cli INPUT_DIR OUTPUT_DIR --metamap-path path/to/metamap20
+```
+
+The CLI supports parallel processing with the `--workers` option and keeps a
+state file in the output directory so interrupted runs can be resumed.
 
 Concept extraction is done via parse method
 <pre>
