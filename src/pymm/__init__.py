@@ -10,6 +10,6 @@ except DistributionNotFound:
 
 from .pymm import Metamap, MetamapStuck
 
-__author__ = "Srikanth Mujjiga"
-__copyright__ = "Srikanth Mujjiga"
+__author__ = "Dr. Layth Qassem"
+__copyright__ = "Dr. Layth Qassem"
 __license__ = "mit"

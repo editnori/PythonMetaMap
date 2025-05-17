@@ -82,7 +82,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'pymm'
-copyright = u'2018, user@example.com'
+copyright = u'2025, Dr. Layth Qassem'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -233,7 +233,7 @@ latex_elements = {
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
   ('index', 'user_guide.tex', u'pymm Documentation',
-   u'user@example.com', 'manual'),
+   u'Dr. Layth Qassem', 'manual'),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
