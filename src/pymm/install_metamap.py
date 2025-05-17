@@ -312,15 +312,27 @@ def extract_with_system_tar(tar_path: str, dest_dir: str, mode: str) -> bool:
 
 def run_install_script():
     print(f"Attempting to run install script: {INST_SCRIPT}")
-    install_script_dir = os.path.dirname(INST_SCRIPT)
+    install_script_dir = os.path.dirname(INST_SCRIPT)            # …/public_mm/bin
+    public_mm_dir = os.path.dirname(install_script_dir)          # …/public_mm (one level up)
+
+    # Decide where to execute the script from so that the default basedir is correct
+    # If the install script is inside a conventional …/public_mm/bin/ directory, run from
+    # public_mm and invoke "bash bin/install.sh". Otherwise fall back to the old behaviour.
+    if (
+        os.path.basename(install_script_dir) == "bin"
+        and os.path.basename(public_mm_dir) == "public_mm"
+    ):
+        run_cwd = public_mm_dir
+        cmd = ["bash", "bin/install.sh"]
+    else:
+        run_cwd = install_script_dir
+        cmd = ["./" + os.path.basename(INST_SCRIPT)]
+
     if exists(INST_SCRIPT):
-        print(f"Changing current directory to: {install_script_dir} for install.sh execution")
-        # Grant execute permissions
+        print(f"Executing installer from: {run_cwd}  ->  {' '.join(cmd)}")
         subprocess.call(["chmod", "+x", INST_SCRIPT])
-        # Run the install script from its directory
         try:
-            process = subprocess.Popen(["./" + os.path.basename(INST_SCRIPT)], cwd=install_script_dir, 
-                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            process = subprocess.Popen(cmd, cwd=run_cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
             
             # Stream output with tqdm
             if process.stdout:
