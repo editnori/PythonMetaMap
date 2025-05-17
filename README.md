@@ -1,8 +1,5 @@
 # PythonMetaMap
 
-
-=======
-# Python MetaMap Wrapper
 PythonMetaMap provides a lightweight Python interface for running [MetaMap](https://github.com/LHNCBC/MetaMap-src) and parsing its XML output. The project is maintained by **Dr. Layth Qassem** and takes inspiration from the original `pymm` library by Srikanth Mujjiga.
 
 This repository bundles a lightweight Python wrapper around the MetaMap 2020 binaries.  It provides
