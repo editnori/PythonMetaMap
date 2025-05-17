@@ -9,6 +9,8 @@ import sys
 from setuptools import setup
 
 entry_points = """
+[console_scripts]
+pymm-cli = pymm.cli:main
 """
 
 def setup_package():

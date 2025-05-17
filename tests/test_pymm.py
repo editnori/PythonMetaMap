@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
 import pytest
 from pymm import Metamap
 from os.path import exists
@@ -10,7 +11,10 @@ __copyright__ = "Srikanth Mujjiga"
 __license__ = "mit"
 
 # Point the path pointing to metamap
-METAMAP_PATH = "/home/smujjiga/smujjiga/public_mm/bin/metamap16"
+METAMAP_PATH = os.environ.get("TEST_METAMAP_PATH", "/nonexistent/metamap")
+
+if not os.path.exists(METAMAP_PATH):
+    pytest.skip("Metamap binary not available for tests", allow_module_level=True)
 
 
 def test_alive():
