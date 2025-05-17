@@ -11,6 +11,8 @@ from setuptools import setup
 entry_points = """
 [console_scripts]
 pymm-cli = pymm.cli:main
+=======
+pymm-install = install_metamap:main
 """
 
 def setup_package():
