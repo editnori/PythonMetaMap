@@ -179,13 +179,14 @@ def download_and_extract(url, extract_to_dir, is_source=False):
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
             req = urllib.request.Request(url, headers=headers)
-            response = urllib.request.urlopen(req)
+            # 30 s timeout – long enough for slow CDNs, short enough to fail fast
+            response = urllib.request.urlopen(req, timeout=30)
             total_size = int(response.getheader('Content-Length', 0))
             block_size = 8192 # 8KB per chunk
             
             with (
                 open(tar_path, 'wb') as out_file,
-                tqdm(total=total_size, unit='B', unit_scale=True, desc=tar_filename, ascii=" #") as pbar
+                tqdm(total=total_size, unit='B', unit_scale=True, desc=tar_filename, ascii=True) as pbar
             ):
                 while True:
                     chunk = response.read(block_size)
@@ -255,10 +256,19 @@ def download_and_extract(url, extract_to_dir, is_source=False):
         print("System tar extraction completed.")
         return True
 
-    # Fallback to pure-Python extraction
+    # Fallback to pure-Python extraction with path safety
+    def _is_within_directory(directory, target):
+        abs_directory = os.path.abspath(directory)
+        abs_target = os.path.abspath(target)
+        return os.path.commonprefix([abs_directory, abs_target]) == abs_directory
+
     try:
         with tarfile.open(tar_path, mode) as tar:
             print("Streaming extraction … this may take several minutes (Python tarfile).")
+            for member in tar.getmembers():
+                member_path = os.path.join(extract_to_dir, member.name)
+                if not _is_within_directory(extract_to_dir, member_path):
+                    raise RuntimeError(f"Unsafe path in tar file: {member.name}")
             tar.extractall(path=extract_to_dir)
         print(f"Successfully extracted {tar_filename}.")
         return True # Indicate success
@@ -312,7 +322,7 @@ def run_install_script():
             
             # Stream output with tqdm
             if process.stdout:
-                with tqdm(desc="install.sh output", unit=" lines", ascii=" #") as pbar:
+                with tqdm(desc="install.sh output", unit=" lines", ascii=True) as pbar:
                     for line in iter(process.stdout.readline, ''):
                         sys.stdout.write(line) # Use sys.stdout.write for direct printing
                         sys.stdout.flush()
@@ -345,8 +355,8 @@ def test_metamap_installation(metamap_binary_path):
 
     # Add src to sys.path to import pymm
     # Assumes install_metamap.py is in the project root, and pymm is in project_root/src/pymm
-    project_root = abspath(dirname(__file__))
-    src_path = join(project_root, "src")
+    # Reuse the already-determined _SRC_DIR pointing to …/src
+    src_path = _SRC_DIR
     if src_path not in sys.path:
         sys.path.insert(0, src_path)
     
@@ -388,7 +398,12 @@ def main():
     # Check for a fully completed installation first (e.g. metamap_install/public_mm/bin/metamap)
     if exists(EXPECTED_METAMAP_BINARY) and os.access(EXPECTED_METAMAP_BINARY, os.X_OK):
         print(f"\nMetaMap appears to be already installed and executable at: {EXPECTED_METAMAP_BINARY}")
-        choice = input("Do you want to remove the existing 'public_mm' directory and reinstall? (yes/no): ").strip().lower()
+        if os.getenv("PYMM_FORCE_REINSTALL", "").lower() in {"yes", "true", "1"}:
+            choice = "yes"
+        elif not sys.stdin.isatty():
+            choice = "no"
+        else:
+            choice = input("Do you want to remove the existing 'public_mm' directory and reinstall? (yes/no): ").strip().lower()
         if choice == 'yes':
             public_mm_actual_path = os.path.join(META_INSTALL_DIR, "public_mm")
             print(f"Removing existing installation directory: {public_mm_actual_path}...")

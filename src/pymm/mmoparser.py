@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import division, print_function, absolute_import
 
 import collections
 from xml.dom.minidom import parse as parse_xml
@@ -28,8 +27,21 @@ candidate_mapping = {
 class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys()))):
     @classmethod
     def from_xml(cls, candidate, is_mapping=False):
-        def get_data(candidate, tagName):
-            return candidate.getElementsByTagName(tagName)[0].childNodes[0].data
+        def get_data(candidate, tag_name):
+            """Return text of the first *tag_name* child element or "" if absent.
+
+            Traverses until the first TEXT_NODE to avoid returning empty strings when
+            the tag contains wrapper elements (<i>, <b>, etc.)."""
+            nodes = candidate.getElementsByTagName(tag_name)
+            if not nodes:
+                return ""
+            node = nodes[0]
+            child = node.firstChild
+            while child is not None and child.nodeType != node.TEXT_NODE:
+                child = child.nextSibling
+            if child and child.nodeType == node.TEXT_NODE:
+                return child.data
+            return ""
 
         # Extract Source vocabulary strings (recursively found under <Source> within <Sources>)
         sources = []
@@ -39,7 +51,7 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
                 sources.append(src_node.childNodes[0].data.strip())
         # Case 2: single <Sources> element containing a pipe-separated list
         for srcs_node in candidate.getElementsByTagName("Sources"):
-            if srcs_node.childNodes and srcs_node.childNodes[0].nodeType == src_node.TEXT_NODE:
+            if srcs_node.childNodes and srcs_node.childNodes[0].nodeType == srcs_node.TEXT_NODE:
                 raw = srcs_node.childNodes[0].data.strip()
                 # Split on common separators
                 for token in raw.replace("|", ":").replace(",", ":").split(":"):
@@ -186,12 +198,21 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
             if node_ptr.tagName == "Utterance":
                 # Try standard id attribute
                 if node_ptr.hasAttribute("id"):
-                    utterance_id_val = int(node_ptr.getAttribute("id"))
+                    try:
+                        utterance_id_val = int(node_ptr.getAttribute("id"))
+                    except ValueError:
+                        utterance_id_val = None
                 # Try alternate formats if no standard ID
                 elif node_ptr.hasAttribute("Index") or node_ptr.hasAttribute("index"):
-                    utterance_id_val = int(node_ptr.getAttribute("Index") or node_ptr.getAttribute("index"))
+                    try:
+                        utterance_id_val = int(node_ptr.getAttribute("Index") or node_ptr.getAttribute("index"))
+                    except ValueError:
+                        utterance_id_val = None
                 elif node_ptr.hasAttribute("number") or node_ptr.hasAttribute("Number"):
-                    utterance_id_val = int(node_ptr.getAttribute("number") or node_ptr.getAttribute("Number"))
+                    try:
+                        utterance_id_val = int(node_ptr.getAttribute("number") or node_ptr.getAttribute("Number"))
+                    except ValueError:
+                        utterance_id_val = None
                 break
             node_ptr = node_ptr.parentNode
             
@@ -202,7 +223,7 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
                 try:
                     utterance_id_val = int(utt_num_nodes[0].childNodes[0].data)
                 except (ValueError, IndexError):
-                    pass
+                    utterance_id_val = None
 
         return cls(
             cui=get_data(candidate, candidate_mapping['cui']),

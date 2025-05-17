@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-from __future__ import division, print_function, absolute_import
-
+# Standard library imports
 from os.path import abspath
 import subprocess
 import os
+import shlex
 
 __author__ = "Srikanth Mujjiga"
 __copyright__ = "Srikanth Mujjiga"
@@ -31,7 +31,7 @@ class MetamapCommand:
         if env_options_str:
             # Split the string into a list of options
             # Handles options like "-y" or "--lexicon db" correctly if they are space-separated
-            current_options = env_options_str.split()
+            current_options = shlex.split(env_options_str)
             if self.debug:
                 print(f"Using METAMAP_PROCESSING_OPTIONS from environment: {current_options}")
         else:

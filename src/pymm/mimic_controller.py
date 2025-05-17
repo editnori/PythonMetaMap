@@ -13,7 +13,6 @@ Usage:
 
 Creates/updates OUTPUT_DIR/.mimic_state.json and logs to OUTPUT_DIR/mimic.log
 """
-from __future__ import print_function, division # For Python 2.7 compatibility
 
 import json
 import os
@@ -643,7 +642,13 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
         finally:
             end_time = time.time(); duration_ms = int((end_time - start_time) * 1000)
             try:
-                with open(output_csv_path, 'a', encoding='utf-8') as f_out_end:
+                start_marker_required = (not os.path.exists(output_csv_path)) or os.path.getsize(output_csv_path) == 0
+                open_mode = 'a'
+                with open(output_csv_path, open_mode, encoding='utf-8') as f_out_end:
+                    if start_marker_required:
+                        # Write start marker and CSV header for symmetry even if an early error occurred
+                        f_out_end.write(f"{START_MARKER_PREFIX}{input_file_basename}\n")
+                        csv.writer(f_out_end, quoting=csv.QUOTE_ALL, doublequote=True).writerow(CSV_HEADER)
                     end_marker = f"{END_MARKER_PREFIX}{input_file_basename}{':ERROR' if processing_error_occurred else ''}\n"
                     f_out_end.write(end_marker)
             except Exception as e_marker: 
@@ -1167,4 +1172,7 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
+    import multiprocessing as _mp
+    # Required on Windows when using ProcessPoolExecutor
+    _mp.freeze_support()
     main() 

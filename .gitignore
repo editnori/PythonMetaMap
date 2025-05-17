@@ -110,5 +110,5 @@ metamap_install/
 BatchRunner01.class
 
 # VSCode
-.vscode/ .env.local
+.vscode/
 .env.local
