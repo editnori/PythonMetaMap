@@ -1,4 +1,6 @@
 import argparse
+import csv
+=======
 import os
 import sys
 import json
@@ -26,6 +28,12 @@ def _process_file(args):
             return basename, False, 'empty input'
         mmos = mm.parse([text], timeout=timeout)
         concepts = [c for mmo in mmos for c in mmo]
+        with open(out_csv, 'w', encoding='utf-8', newline='') as out_f:
+            writer = csv.writer(out_f)
+            writer.writerow(["cui", "score", "matched"])
+            for concept in concepts:
+                writer.writerow([concept.cui, concept.score, concept.matched])
+=======
         with open(out_csv, 'w', encoding='utf-8') as out_f:
             for c in concepts:
                 out_f.write(f"{c.cui},{c.score},{c.matched}\n")
@@ -74,6 +82,8 @@ def main(argv=None):
 
     if not args.metamap_path or not os.path.exists(args.metamap_path):
         parser.error('Valid MetaMap installation not found. Use --metamap-path or set METAMAP_PATH')
+
+=======
     return run_batch(args.input_dir, args.output_dir, args.metamap_path, args.workers, args.timeout)
 
 if __name__ == '__main__':

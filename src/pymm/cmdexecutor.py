@@ -5,8 +5,8 @@ from __future__ import division, print_function, absolute_import
 from os.path import abspath
 import subprocess
 
-__author__ = "Srikanth Mujjiga"
-__copyright__ = "Srikanth Mujjiga"
+__author__ = "Dr. Layth Qassem"
+__copyright__ = "Dr. Layth Qassem"
 __license__ = "mit"
 
 class MetamapCommand:
