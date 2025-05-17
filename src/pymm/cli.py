@@ -1,5 +1,6 @@
 import argparse
 import csv
+=======
 import os
 import sys
 import json
@@ -32,6 +33,10 @@ def _process_file(args):
             writer.writerow(["cui", "score", "matched"])
             for concept in concepts:
                 writer.writerow([concept.cui, concept.score, concept.matched])
+=======
+        with open(out_csv, 'w', encoding='utf-8') as out_f:
+            for c in concepts:
+                out_f.write(f"{c.cui},{c.score},{c.matched}\n")
         return basename, True, None
     except Exception as exc:  # broad catch to report failures
         return basename, False, str(exc)
@@ -78,6 +83,7 @@ def main(argv=None):
     if not args.metamap_path or not os.path.exists(args.metamap_path):
         parser.error('Valid MetaMap installation not found. Use --metamap-path or set METAMAP_PATH')
 
+=======
     return run_batch(args.input_dir, args.output_dir, args.metamap_path, args.workers, args.timeout)
 
 if __name__ == '__main__':
