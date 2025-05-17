@@ -32,7 +32,8 @@ import re # For regular expressions
 
 # --- Ensure the local patched version of pymm is imported ---
 project_root = os.path.dirname(__file__)
-pymm_src_path = os.path.join(project_root, "pymm", "src")
+# Adjust path to local pymm package (src/pymm)
+pymm_src_path = os.path.join(project_root, "src")
 if os.path.isdir(os.path.join(pymm_src_path, "pymm")) and pymm_src_path not in sys.path:
     sys.path.insert(0, pymm_src_path)
     # Optional debug print: which pymm will be imported
