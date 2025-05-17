@@ -25,6 +25,23 @@ candidate_mapping = {
 
 
 class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys()))):
+    """A lightweight immutable container for a MetaMap *concept*.
+
+    Coordinate conventions
+    ---------------------
+    MetaMap's native XML reports character offsets in **0-based start, length**
+    (via the <Position x="" y=""/> tag).  Older releases encode one or more
+    *start/len* tokens in `<PositionalInfo>` where *start* is again 0-based.
+
+    For historical reasons this wrapper stores **1-based** `pos_start` so that
+    the value can be copied straight into spreadsheets that are shared with
+    the Java API users (the Java demo prints `x` unchanged which is 1-based in
+    their CSV).  To simplify maths two helper properties expose the same span
+    in 0-based form without allocating a new object:
+
+    * ``pos_start0`` – 0-based start (or ``None``)
+    * ``pos_end0``   – 0-based *exclusive* end (or ``None``)
+    """
     @classmethod
     def from_xml(cls, candidate, is_mapping=False):
         def get_data(candidate, tag_name):
@@ -255,6 +272,30 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
         return "{0}, {1}, {2}, {3}, {4}, [{5}:{6}]".format(
             self.score, self.cui, self.semtypes, self.matched, self.isnegated, self.matchedstart, self.matchedend
         )
+
+    # ------------------------------------------------------------------
+    # Convenience coordinate helpers
+    # ------------------------------------------------------------------
+
+    @property
+    def pos_start0(self):
+        """0-based start position or ``None``."""
+        if self.pos_start is None:
+            return None
+        return self.pos_start - 1  # stored value is 1-based
+
+    @property
+    def pos_end0(self):
+        """0-based *exclusive* end = start0 + length."""
+        if self.pos_start is None or self.pos_length is None:
+            return None
+        return (self.pos_start - 1) + self.pos_length
+
+    # Handy for debugging equality between Java and Python outputs
+    def span_tuple(self, zero_based: bool = True):
+        if zero_based:
+            return (self.pos_start0, self.pos_end0)
+        return (self.pos_start, None if self.pos_length is None else self.pos_start + self.pos_length - 1)
 
 
 class MMOS:

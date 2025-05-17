@@ -204,3 +204,102 @@ pymm-cli install   # will fetch from your mirror instead of GitHub
 ```
 
 Leave the variable in your shell profile (e.g., `.bashrc`) to make subsequent `pymm-cli install` calls idempotent and offline-friendly.
+
+## 2025 Update – server-less batch, background mode, live dashboard
+
+* **Server-less by default:** the controller no longer tries to start MetaMap's Tagger/WSD/mmserver20.  Your jobs run fine without Java services; starting them manually is optional.
+* **Background batch launch:** when you choose "Run MetaMap Batch Processing" in the interactive menu, the job is now started in a detached process (`nohup` / Windows-detached).  You can safely close the terminal; PID is written to `.mimic_pid` and logs stream to `<output_dir>/mimic_controller.log`.
+* **Live Monitor Dashboard:** interactive menu option 3 opens a real-time dashboard that refreshes every two seconds, showing CPU/RAM, progress, and active workers.
+* **Better logging:** each batch automatically creates/attaches a file handler so you can `tail -f` the log while the job is running.
+
+These improvements mean you can kick off a long run, shut your laptop lid, and come back later—all from pure Python.
+
+## Architecture – Python Wrapper vs. Java API
+
+Below is a **side-by-side** view of the two batch pipelines that ship with this repository.  Both reach the same goal (map free-text to UMLS CUIs) but they differ in *where* the heavy-lifting happens and *what* is returned to the caller.
+
+```text
+            ┌────────────────────┐                         ┌────────────────────┐
+            │  Input directory   │                         │  Input directory   │
+            │   (*.txt files)    │                         │   (*.txt files)    │
+            └────────┬───────────┘                         └────────┬───────────┘
+                     │                                            │
+     (Python)        │                                            │       (Java)
+ MIMIC Controller    │                                            │  BatchRunner01
+   + tqdm progress   │                                            │  (MetaMap Java API)
+   + resume logic    ▼                                            ▼
+            ┌────────────────────┐                         ┌────────────────────┐
+            │  pymm.Metamap      │                         │  MetaMapApiImpl     │
+            │  (Python wrapper)  │                         │  (gov.nih.nlm.*)    │
+            └────────┬───────────┘                         └────────┬───────────┘
+                     │  builds CLI                                     │  JVM      
+                     │  + spawns PROC                                   │  calls C
+                     ▼                                                  ▼
+            ┌────────────────────┐                         ┌────────────────────┐
+            │  MetaMap binary    │                         │  MetaMap binary    │
+            │  (Prolog + C)      │                         │  (started by API)  │
+            └────────┬───────────┘                         └────────┬───────────┘
+                     │  writes XML                                    │  streams objects
+                     ▼                                                  ▼
+            ┌────────────────────┐                         ┌────────────────────┐
+            │  mmoparser.py      │                         │  Result / Utterance │
+            │  (DOM → Concept)   │                         │  PCM / Mapping      │
+            └────────┬───────────┘                         └────────┬───────────┘
+                     │                                            │
+                     ▼                                            ▼
+            ┌────────────────────┐                         ┌────────────────────┐
+            │   CSV writer       │                         │   CSV writer       │
+            │ (Unicode safe)     │                         │  (java.io.*)       │
+            └────────────────────┘                         └────────────────────┘
+```
+
+Key differences:
+
+1. **Process isolation** – The Python path launches the *metamap* binary as a
+   *sub-process* per worker which keeps the JVM out of the equation.  The Java
+   path embeds the native code inside the same JVM.  For long-running servers
+   the latter has lower per-call overhead, but restarting a wedged MetaMap is
+   simpler on the Python side (just kill the process).
+
+2. **Error containment** – When MetaMap crashes it exits with a non-zero code
+   which the Python wrapper captures and retries; the Java API surfaces native
+   crashes as `IOException`/`UnsatisfiedLinkError` which bubble up the stack.
+
+3. **Resource usage** – The Python model scales well on multi-core machines by
+   forking multiple workers (avoids the GIL thanks to `multiprocessing`).  The
+   Java route enjoys *in-process* JNI calls but must share a single JVM heap.
+
+4. **Portability** – Python orchestration runs anywhere the MetaMap *binary*
+   runs (Linux, WSL, macOS).  The Java code needs a compatible JDK and may need
+   `jna` work-arounds on Alpine, containers, etc.
+
+### Why not JSON?
+
+MetaMap 2020's most structured output format is still **XML** (`--XMLf#`).  It
+is verbose but:
+
+* Maintains strict ordering and nesting that mirrors the Java object model.
+* Is the *only* format that carries full positional information **and** negation
+  attributes in one shot.
+
+An experimental *JSON* fielded output exists in *MetaMapLite* but it is missing
+several tags (e.g. `PositionalInfo`).  Until the upstream project standardises
+on JSON we keep XML as the canonical interchange format and convert down-stream
+(via `mmoparser.py`) to Python objects.  The overhead is negligible compared to
+MetaMap's own runtime.
+
+### Choosing between the two pipelines
+
+| Criterion            | Prefer **Python**                             | Prefer **Java**                                |
+|----------------------|-----------------------------------------------|------------------------------------------------|
+| Quick prototyping    | ✅ one `pip install`                          |                                                |
+| Tight JVM eco-system |                                               | ✅ integrate with Spring / Hadoop / Spark      |
+| Resource isolation   | ✅ each worker is a separate OS process        |                                                |
+| Ultra-high throughput|                                               | ✅ keep MetaMap resident inside one JVM        |
+| Minimal dependencies | ✅ *No Java at runtime*                       |                                                |
+
+For heterogeneous teams you can mix & match: run the Python controller for
+batch jobs on a POSIX box while exposing a lightweight wrapper around the Java
+API as a REST micro-service for ad-hoc queries.
+
+---
