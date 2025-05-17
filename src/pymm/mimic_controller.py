@@ -34,6 +34,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 CONFIG_FILE_NAME = ".pymm_controller_config.json"
 METAMAP_PROCESSING_OPTIONS_DEFAULT = "-y -Z 2020AA --lexicon db" 
 MAX_PARALLEL_WORKERS_DEFAULT = 4
+DEFAULT_PYMM_TIMEOUT = 300  # 5 minutes in seconds
 
 def get_config_path():
     """Gets the path to the configuration file in the user's home directory."""
@@ -219,7 +220,7 @@ def configure_all_settings(is_reset=False):
                                    code_default=str(MAX_PARALLEL_WORKERS_DEFAULT))
     prompt_and_save_config_value("pymm_timeout", "Per-file MetaMap timeout (seconds)",
                                   explanation="How long MetaMap is allowed to run on a single note before being killed.",
-                                  code_default="300")
+                                  code_default=str(DEFAULT_PYMM_TIMEOUT))
     print("--- Configuration Complete ---")
 
 # --- PyMetaMap Import (from .pymm import Metamap as PyMetaMap) ---
@@ -343,6 +344,144 @@ def status_metamap_servers(public_mm_dir):
         print("mmserver20 running – PIDs:", ", ".join(running_mmservers))
     else:
         print("mmserver20 not detected in process list.")
+
+def kill_all_metamap_processes():
+    """Kill all MetaMap-related processes and Python workers.
+    
+    This function tries to kill:
+    1. All metamap and mmserver processes
+    2. Python processes running mimic_controller that are part of a batch
+    3. Related worker processes
+    
+    Returns a count of processes terminated.
+    """
+    terminated_count = 0
+    
+    try:
+        # First try Unix-style commands
+        print("Attempting to kill all MetaMap processes...")
+        
+        # Kill all metamap processes
+        try:
+            result = subprocess.run(["pkill", "-f", "metamap"], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                print("Successfully terminated metamap processes")
+                terminated_count += 1
+        except Exception as e:
+            print(f"Error killing metamap processes: {e}")
+
+        # Kill all mmserver processes
+        try:
+            result = subprocess.run(["pkill", "-f", "mmserver"], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                print("Successfully terminated mmserver processes")
+                terminated_count += 1
+        except Exception as e:
+            print(f"Error killing mmserver processes: {e}")
+            
+        # Kill Python processes running batch processing
+        try:
+            result = subprocess.run(["pkill", "-f", "mimic_controller.py"], 
+                                   stdout=subprocess.PIPE, 
+                                   stderr=subprocess.PIPE)
+            if result.returncode == 0:
+                print("Successfully terminated Python mimic_controller processes")
+                terminated_count += 1
+        except Exception as e:
+            print(f"Error killing Python processes: {e}")
+            
+        # On Windows, try using taskkill
+        if sys.platform == "win32":
+            try:
+                subprocess.run(["taskkill", "/F", "/IM", "metamap*"], 
+                              stdout=subprocess.PIPE, 
+                              stderr=subprocess.PIPE)
+                subprocess.run(["taskkill", "/F", "/IM", "mmserver*"], 
+                              stdout=subprocess.PIPE, 
+                              stderr=subprocess.PIPE)
+                print("Attempted to kill MetaMap processes using Windows taskkill")
+                terminated_count += 1
+            except Exception as e:
+                print(f"Error using Windows taskkill: {e}")
+                
+        print(f"Kill operation completed. Terminated {terminated_count} process groups.")
+        return terminated_count
+        
+    except Exception as e:
+        print(f"Error during kill operation: {e}")
+        return 0
+
+def clear_output_directory(output_dir):
+    """Clear all files in the output directory to start fresh.
+    
+    This removes:
+    - All CSV files (the results)
+    - PID file
+    - State file (.mimic_state.json)
+    - Log files
+    
+    Returns the count of files removed.
+    """
+    if not os.path.exists(output_dir):
+        print(f"Output directory does not exist: {output_dir}")
+        return 0
+        
+    if not os.path.isdir(output_dir):
+        print(f"Not a directory: {output_dir}")
+        return 0
+    
+    files_removed = 0
+    
+    try:
+        print(f"Clearing output directory: {output_dir}")
+        
+        # First remove specific management files
+        special_files = [
+            os.path.join(output_dir, STATE_FILE),
+            os.path.join(output_dir, PID_FILE),
+            os.path.join(output_dir, "pymm_run.log"),
+            os.path.join(output_dir, get_dynamic_log_filename(output_dir))
+        ]
+        
+        for file_path in special_files:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                    print(f"Removed: {file_path}")
+                    files_removed += 1
+                except Exception as e:
+                    print(f"Error removing {file_path}: {e}")
+        
+        # Then remove all CSV files
+        for file_name in os.listdir(output_dir):
+            if file_name.endswith(".csv"):
+                file_path = os.path.join(output_dir, file_name)
+                try:
+                    os.remove(file_path)
+                    files_removed += 1
+                except Exception as e:
+                    print(f"Error removing {file_path}: {e}")
+        
+        # Also remove the error_files subdirectory if it exists
+        error_dir = os.path.join(output_dir, ERROR_FOLDER)
+        if os.path.exists(error_dir) and os.path.isdir(error_dir):
+            try:
+                shutil.rmtree(error_dir)
+                print(f"Removed error directory: {error_dir}")
+                files_removed += 1
+            except Exception as e:
+                print(f"Error removing error directory {error_dir}: {e}")
+        
+        print(f"Cleanup completed. Removed {files_removed} files/directories.")
+        return files_removed
+        
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+        return files_removed
 
 # --- Auto-start helper -------------------------------------------------
 def _is_server_process_running(command_path, server_name_in_output):
@@ -510,6 +649,54 @@ def get_dynamic_log_filename(base_output_dir):
     else:
         return "generic_controller.log"
 
+def ensure_logging_setup(output_dir, force=False):
+    """Force-create a log file in the output directory and verify it's writable.
+    
+    Returns the path to the log file if successful, None otherwise.
+    """
+    if not os.path.exists(output_dir):
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            print(f"Created output directory: {output_dir}")
+        except Exception as e:
+            print(f"ERROR: Failed to create output directory {output_dir}: {e}")
+            return None
+    
+    log_filename = get_dynamic_log_filename(output_dir)
+    log_path = os.path.join(output_dir, log_filename)
+    
+    try:
+        # Create/touch log file to ensure it exists and is writable
+        with open(log_path, 'a') as f:
+            f.write(f"# Log initialized on {datetime.now().isoformat()}\n")
+        
+        # Setup or re-setup logging
+        root_logger = logging.getLogger()
+        if force:
+            # Remove existing handlers
+            for handler in root_logger.handlers[:]:
+                root_logger.removeHandler(handler)
+        
+        # Add console handler
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        console_handler.setLevel(logging.INFO)
+        root_logger.addHandler(console_handler)
+        
+        # Add file handler - use basic implementation to avoid _safe_add_file_handler issues
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+        file_handler.setLevel(logging.INFO)
+        root_logger.addHandler(file_handler)
+        
+        root_logger.setLevel(logging.INFO)
+        logging.info(f"Logging successfully initialized to {log_path}")
+        print(f"Logging to: {log_path}")
+        return log_path
+    except Exception as e:
+        print(f"ERROR: Failed to set up logging to {log_path}: {e}")
+        return None
+
 def parse_iso_datetime_compat(dt_str):
     if not dt_str:
         return None
@@ -584,7 +771,7 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                 # End marker written in finally
                 continue
             
-            pymm_timeout = int(get_config_value("pymm_timeout", os.getenv("PYMM_TIMEOUT", "120")))
+            pymm_timeout = int(get_config_value("pymm_timeout", os.getenv("PYMM_TIMEOUT", str(DEFAULT_PYMM_TIMEOUT))))
             mmos_iter = mm.parse(lines, timeout=pymm_timeout)
             concepts_list = [concept for mmo_item in mmos_iter for concept in mmo_item]
 
@@ -834,6 +1021,9 @@ def _safe_add_file_handler(log_path: str):
                 logging.error("All attempts to create a file handler failed (%s). Continuing without file logging.", final_err)
 
 def execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_binary_path, global_metamap_options):
+    # Ensure logging is set up first thing
+    ensure_logging_setup(out_dir_str)
+
     logging.info(f"Executing batch processing. Mode: {mode}, Input: {inp_dir_str}, Output: {out_dir_str}")
     logging.info(f"  MetaMap Binary: {global_metamap_binary_path}")
     logging.info(f"  MetaMap Options: {global_metamap_options}")
@@ -1000,15 +1190,45 @@ def handle_run_batch_processing():
     Path(inp_dir).mkdir(parents=True, exist_ok=True); Path(out_dir).mkdir(parents=True, exist_ok=True)
     print(f"Using Input directory: {os.path.abspath(inp_dir)}")
     print(f"Using Output directory: {os.path.abspath(out_dir)}")
+    
+    # Force log setup right here to ensure logging works
+    log_path = ensure_logging_setup(out_dir, force=True)
+    if not log_path:
+        print("WARNING: Failed to set up logging. Processing will continue but may not produce log files.")
 
     metamap_opts = get_config_value("metamap_processing_options", METAMAP_PROCESSING_OPTIONS_DEFAULT)
     current_max_workers = int(get_config_value("max_parallel_workers", str(MAX_PARALLEL_WORKERS_DEFAULT)))
+    timeout_value = int(get_config_value("pymm_timeout", os.getenv("PYMM_TIMEOUT", str(DEFAULT_PYMM_TIMEOUT))))
     # The global MAX_PARALLEL_WORKERS is used by execute_batch_processing, ensure it reflects current config
     global MAX_PARALLEL_WORKERS
     MAX_PARALLEL_WORKERS = current_max_workers
 
     print(f"MetaMap Options: '{metamap_opts}'")
     print(f"Max Parallel Workers: {MAX_PARALLEL_WORKERS}")
+    print(f"Timeout per file: {timeout_value} seconds")
+
+    # Show nohup command for background processing
+    script_name = os.path.basename(sys.argv[0])
+    if script_name == "pymm-cli" or script_name == "pymm":
+        nohup_cmd = f"nohup {script_name} start {inp_dir} {out_dir} > {out_dir}/pymm_run.log 2>&1 &"
+        print("\nTo run in background with nohup, use this command:")
+        print(f"  {nohup_cmd}")
+        print("\nTo watch progress in real-time:")
+        print(f"  tail -f {out_dir}/pymm_run.log")
+        print(f"  tail -f {out_dir}/{get_dynamic_log_filename(out_dir)}")
+        
+        run_bg = input("\nRun in background now? (yes/no, default: no): ").strip().lower() == 'yes'
+        if run_bg:
+            try:
+                pid = os.fork()
+                if pid > 0:
+                    # Parent process
+                    print(f"Started background process with PID {pid}")
+                    sys.exit(0)
+                # Child process continues
+            except OSError:
+                print("Background execution not supported on this platform")
+                # Continue with normal execution
 
     # Auto-start MetaMap servers if needed (disabled)
     # ensure_servers_running()
@@ -1127,6 +1347,61 @@ def handle_monitor_dashboard():
     except KeyboardInterrupt:
         print("\nExiting dashboard…")
 
+def handle_kill_all_processes():
+    """Handle killing all MetaMap and worker processes."""
+    print("\n--- Kill All MetaMap Processes ---")
+    if input("Are you sure you want to kill all MetaMap and worker processes? This will stop any running batches. (yes/no): ").strip().lower() == 'yes':
+        terminated = kill_all_metamap_processes()
+        if terminated > 0:
+            print("Successfully terminated MetaMap processes.")
+        else:
+            print("No active processes were found or termination failed.")
+    else:
+        print("Kill operation cancelled.")
+
+def handle_clear_output_directory():
+    """Handle clearing an output directory for a fresh start."""
+    print("\n--- Clear Output Directory ---")
+    default_output = get_config_value("default_output_dir", "./output_csvs")
+    out_dir = input(f"Enter output directory to clear (default: {default_output}): ").strip() or default_output
+    
+    if not os.path.exists(out_dir):
+        print(f"Output directory does not exist: {out_dir}")
+        if input("Create the directory? (yes/no): ").strip().lower() == 'yes':
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+                print(f"Created directory: {out_dir}")
+            except Exception as e:
+                print(f"Error creating directory: {e}")
+        return
+        
+    if input(f"Are you sure you want to clear all files in {out_dir}? This cannot be undone. (yes/no): ").strip().lower() == 'yes':
+        # First check and kill any running processes
+        pid_path = os.path.join(out_dir, PID_FILE)
+        if os.path.exists(pid_path):
+            try:
+                with open(pid_path, 'r') as f:
+                    pid = int(f.read().strip())
+                if input(f"Found PID file with process {pid}. Kill this process first? (yes/no): ").strip().lower() == 'yes':
+                    try:
+                        os.kill(pid, 15)  # SIGTERM
+                        print(f"Sent termination signal to process {pid}")
+                    except ProcessLookupError:
+                        print(f"Process {pid} not found (may have already ended)")
+                    except Exception as e:
+                        print(f"Error killing process {pid}: {e}")
+            except Exception as e:
+                print(f"Error reading PID file: {e}")
+        
+        # Clear all files
+        removed = clear_output_directory(out_dir)
+        if removed > 0:
+            print(f"Successfully removed {removed} files/directories from {out_dir}")
+        else:
+            print(f"No files were removed from {out_dir}")
+    else:
+        print("Clear operation cancelled.")
+
 def interactive_main_loop():
     if not logging.getLogger().hasHandlers():
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stdout)
@@ -1148,10 +1423,12 @@ def interactive_main_loop():
         print("4. View Batch Progress")
         print("5. View/Tail Log File")
         print("6. List Pending/Completed Files")
-        print("7. Reset All Saved Configurations to Defaults")
-        print("8. Exit")
+        print("7. Kill All MetaMap Processes")
+        print("8. Clear Output Directory")
+        print("9. Reset All Saved Configurations to Defaults")
+        print("10. Exit")
         try:
-            choice = input("Enter your choice (0-8): ").strip()
+            choice = input("Enter your choice (0-10): ").strip()
         except EOFError:
             print("\nExiting due to EOF.")
             break
@@ -1211,8 +1488,12 @@ def interactive_main_loop():
             else:
                 print("Invalid input/output dir for pending/completed.")
         elif choice == '7':
-            handle_reset_settings()
+            handle_kill_all_processes()
         elif choice == '8':
+            handle_clear_output_directory()
+        elif choice == '9':
+            handle_reset_settings()
+        elif choice == '10':
             print("Exiting.")
             break
         else:
@@ -1268,16 +1549,38 @@ def main():
     final_output_dir_for_logging = _normalize_path_for_os(raw_output_dir_for_logging) if raw_output_dir_for_logging else None
 
     if final_output_dir_for_logging:
-        Path(final_output_dir_for_logging).mkdir(parents=True, exist_ok=True) # Ensure directory exists
-        
-        # Use the raw (potentially /mnt/c) path for get_dynamic_log_filename logic if it relies on specific path structure
-        log_file_name = get_dynamic_log_filename(raw_output_dir_for_logging if raw_output_dir_for_logging else final_output_dir_for_logging)
-        raw_log_path = os.path.join(raw_output_dir_for_logging if raw_output_dir_for_logging else final_output_dir_for_logging, log_file_name) # Build raw path
-        final_log_path = _normalize_path_for_os(raw_log_path) # Normalize final log_path for FileHandler
-        
-        # Ensure the directory for the (potentially normalized) log_path exists
-        Path(os.path.dirname(final_log_path)).mkdir(parents=True, exist_ok=True)
-        
+        # Use the new ensure_logging_setup function for more reliable logging
+        log_path = ensure_logging_setup(final_output_dir_for_logging)
+        if not log_path:
+            # Fall back to old logging method if the new approach fails
+            Path(final_output_dir_for_logging).mkdir(parents=True, exist_ok=True) # Ensure directory exists
+            
+            # Use the raw (potentially /mnt/c) path for get_dynamic_log_filename logic if it relies on specific path structure
+            log_file_name = get_dynamic_log_filename(raw_output_dir_for_logging if raw_output_dir_for_logging else final_output_dir_for_logging)
+            raw_log_path = os.path.join(raw_output_dir_for_logging if raw_output_dir_for_logging else final_output_dir_for_logging, log_file_name) # Build raw path
+            final_log_path = _normalize_path_for_os(raw_log_path) # Normalize final log_path for FileHandler
+            
+            # Ensure the directory for the (potentially normalized) log_path exists
+            Path(os.path.dirname(final_log_path)).mkdir(parents=True, exist_ok=True)
+            
+            root_logger = logging.getLogger()
+            for handler in root_logger.handlers[:]:
+                root_logger.removeHandler(handler)
+            
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+            root_logger.addHandler(console_handler)
+            root_logger.setLevel(logging.INFO)
+
+            existing = any(
+                isinstance(h, logging.FileHandler) and
+                os.path.normcase(os.path.normpath(getattr(h, "baseFilename", ""))) == os.path.normcase(os.path.normpath(final_log_path))
+                for h in root_logger.handlers
+            )
+            if not existing:
+                _safe_add_file_handler(final_log_path)
+    else:
+        # No output directory specified, use basic console logging only
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
             root_logger.removeHandler(handler)
@@ -1286,14 +1589,6 @@ def main():
         console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
         root_logger.addHandler(console_handler)
         root_logger.setLevel(logging.INFO)
-
-        existing = any(
-            isinstance(h, logging.FileHandler) and
-            os.path.normcase(os.path.normpath(getattr(h, "baseFilename", ""))) == os.path.normcase(os.path.normpath(final_log_path))
-            for h in root_logger.handlers
-        )
-        if not existing:
-            _safe_add_file_handler(final_log_path)
 
     if subcmd in {"start", "resume"}:
         if len(sys.argv) != 4: logging.error(f"Error: {subcmd} command requires INPUT_DIR and OUTPUT_DIR arguments."); print(f"Usage: pymm-cli {subcmd} INPUT_DIR OUTPUT_DIR"); sys.exit(1)
@@ -1359,6 +1654,52 @@ def main():
         print(f"  Total size (read files): {total_bytes_read / 1e6:.2f} MB")
         if bad_files_summary: print("\n--- Files with Issues (first 20) ---"); [print(f"  {f}") for f in bad_files_summary[:20]];
         if len(bad_files_summary) > 20: print(f"  ...and {len(bad_files_summary) - 20} more.")
+        sys.exit(0)
+
+    elif subcmd == "killall":
+        print("Killing all MetaMap processes...")
+        terminated = kill_all_metamap_processes()
+        print(f"Terminated {terminated} process groups.")
+        sys.exit(0)
+    
+    elif subcmd == "clearout" and len(sys.argv) >= 3:
+        out_dir_to_clear = os.path.abspath(os.path.expanduser(sys.argv[2]))
+        force_mode = len(sys.argv) >= 4 and sys.argv[3].lower() == "force"
+        
+        if not os.path.exists(out_dir_to_clear):
+            print(f"Output directory does not exist: {out_dir_to_clear}")
+            sys.exit(1)
+        
+        if not force_mode:
+            print(f"WARNING: This will delete all output files in {out_dir_to_clear}")
+            print("To skip this warning, use: pymm-cli clearout <directory> force")
+            confirm = input("Are you sure you want to continue? (yes/no): ").strip().lower()
+            if confirm != "yes":
+                print("Operation cancelled.")
+                sys.exit(0)
+        
+        # Check for running process and kill if needed
+        pid_path = os.path.join(out_dir_to_clear, PID_FILE)
+        if os.path.exists(pid_path):
+            try:
+                with open(pid_path, 'r') as f:
+                    pid = int(f.read().strip())
+                
+                if force_mode or input(f"Found PID file with process {pid}. Kill this process? (yes/no): ").strip().lower() == 'yes':
+                    try:
+                        os.kill(pid, 15)  # SIGTERM
+                        print(f"Sent termination signal to process {pid}")
+                        time.sleep(2)  # Give process time to terminate
+                    except ProcessLookupError:
+                        print(f"Process {pid} not found (may have already ended)")
+                    except Exception as e:
+                        print(f"Error killing process {pid}: {e}")
+            except Exception as e:
+                print(f"Error reading PID file: {e}")
+        
+        # Clear all files
+        removed = clear_output_directory(out_dir_to_clear)
+        print(f"Successfully removed {removed} files/directories from {out_dir_to_clear}")
         sys.exit(0)
 
     elif subcmd == "install":
