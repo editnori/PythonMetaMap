@@ -234,7 +234,21 @@ STATE_FILE = ".mimic_state.json"
 PID_FILE = ".mimic_pid"
 CHECK_INTERVAL = 15  
 ERROR_FOLDER = "error_files"
-CSV_HEADER = ["CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Positions"]
+
+# Position handling simplified: emit a single "Position" column which carries
+# concept‐level coordinates when available, otherwise phrase‐level coordinates.
+
+CSV_HEADER = [
+    "CUI",
+    "Score",
+    "ConceptName",
+    "PrefName",
+    "Phrase",
+    "SemTypes",
+    "Sources",
+    "Position",
+]
+
 START_MARKER_PREFIX = "META_BATCH_START_NOTE_ID:"
 END_MARKER_PREFIX = "META_BATCH_END_NOTE_ID:"
 
@@ -445,8 +459,8 @@ def check_output_file_completion(output_csv_path, input_file_original_stem_for_m
         # Early exit: if the last line is still the CSV header, the file is in progress – do not log a mismatch.
         # CSV_HEADER_PREFIX is a string. last_line_str could be the actual header array if not joined.
         # Ensure CSV_HEADER is a string for startswith if last_line_str is also a string.
-        header_as_string = ",".join(CSV_HEADER) # Make sure we are comparing string with string
-        if last_line_str.startswith(header_as_string):
+        header_regex = r'^"?' + r'"?,"?'.join(re.escape(h) for h in CSV_HEADER) + r'"?$'
+        if re.match(header_regex, last_line_str):
             return False
 
         # For the first line, it should *be* the start marker, not just start with it, after stripping.
@@ -619,29 +633,88 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                             phrase_text   = getattr(concept, 'phrase_text', None) or getattr(concept, 'phrase', None) or getattr(concept, 'matched', '')
                             sem_types_formatted = ":".join(concept.semtypes) if getattr(concept, 'semtypes', None) else ""
                             sources_formatted = "|".join(concept.sources) if getattr(concept, 'sources', None) else ""
-                            positions_formatted = ""
-                            if hasattr(concept, 'pos_start') and concept.pos_start is not None:
+                            # ------------------------------------------------------------------
+                            # 1.  Concept-level (preferred) coordinates
+                            # ------------------------------------------------------------------
+                            pos_concept = ""
+                            if concept.pos_start is not None:
                                 try:
                                     uid_cur = getattr(concept, 'utterance_id', None)
                                     if uid_cur is not None and uid_cur in utterance_offset_map:
                                         rel_start = concept.pos_start - utterance_offset_map[uid_cur] + 1
-                                        positions_formatted = f"{rel_start}:{concept.pos_length if concept.pos_length else len(phrase_text)}"
+                                        _len_val = concept.pos_length if concept.pos_length is not None else len(phrase_text or "")
+                                        pos_concept = f"{rel_start}:{_len_val}"
                                     else:
-                                        positions_formatted = f"{concept.pos_start}:{concept.pos_length if concept.pos_length else len(phrase_text)}"
-                                except Exception: positions_formatted = "" # Error in complex pos logic
-                            if not positions_formatted and phrase_text: # Fallback utterance search
+                                        _len_val = concept.pos_length if concept.pos_length is not None else len(phrase_text or "")
+                                        pos_concept = f"{concept.pos_start}:{_len_val}"
+                                except Exception:
+                                    pos_concept = ""
+
+                            # ------------------------------------------------------------------
+                            # 2.  Phrase-level coordinates (always available)
+                            # ------------------------------------------------------------------
+                            pos_phrase = ""
+                            if concept.phrase_start is not None:
+                                try:
+                                    uid_cur = getattr(concept, 'utterance_id', None)
+                                    if uid_cur is not None and uid_cur in utterance_offset_map:
+                                        rel_start_p = concept.phrase_start - utterance_offset_map[uid_cur] + 1
+                                        _len_val_p = concept.phrase_length if concept.phrase_length is not None else len(phrase_text or "")
+                                        pos_phrase = f"{rel_start_p}:{_len_val_p}"
+                                    else:
+                                        _len_val_p = concept.phrase_length if concept.phrase_length is not None else len(phrase_text or "")
+                                        pos_phrase = f"{concept.phrase_start}:{_len_val_p}"
+                                except Exception:
+                                    pos_phrase = ""
+
+                            # Fallback – look-up by text if anything is missing
+                            if (not pos_phrase or not pos_concept) and phrase_text:
                                 utt_text_lookup = utterance_texts.get(getattr(concept, 'utterance_id', None), whole_note)
                                 idx_f = utt_text_lookup.find(phrase_text)
                                 if idx_f >= 0:
                                     cr_adjust = utt_text_lookup.count('\n', 0, idx_f)
-                                    positions_formatted = f"{idx_f + cr_adjust + 1}:{len(phrase_text)}"
-                            row_data = [concept.cui, concept.score, concept_name, pref_name, phrase_text, sem_types_formatted, sources_formatted, positions_formatted]
+                                    derived = f"{idx_f + cr_adjust + 1}:{len(phrase_text)}"
+                                    if not pos_phrase:
+                                        pos_phrase = derived
+                                    if not pos_concept:
+                                        pos_concept = derived
+
+                            position_value = pos_concept or pos_phrase
+
+                            # --- Final whole-note fallback if still empty ---
+                            if not position_value and phrase_text:
+                                try:
+                                    flat_note = re.sub(r'\s+', ' ', whole_note.lower())
+                                    flat_phrase = re.sub(r'\s+', ' ', phrase_text.lower())
+                                    idx_glob = flat_note.find(flat_phrase)
+                                    if idx_glob >= 0:
+                                        position_value = f"{idx_glob + 1}:{len(flat_phrase)}"
+                                except Exception:
+                                    pass
+
+                            # Collect debugging info when position is still missing
+                            if not position_value:
+                                try:
+                                    dbg_path = os.path.join(main_out_dir, "_missing_position_debug.csv")
+                                    with open(dbg_path, 'a', newline='', encoding='utf-8') as dbg_fh:
+                                        csv.writer(dbg_fh).writerow([input_file_basename, concept.cui, phrase_text[:120]])
+                                except Exception:
+                                    pass
+
+                            row_data = [
+                                concept.cui,
+                                concept.score,
+                                concept_name,
+                                pref_name,
+                                phrase_text,
+                                sem_types_formatted,
+                                sources_formatted,
+                                position_value,
+                            ]
                             writer.writerow([pymm_escape_csv_field(field) for field in row_data])
                         except Exception as e_concept:
                             logging.error(f"[{worker_id}] Error processing/writing concept for {input_file_basename}: {e_concept} - Concept: {concept}")
                             processing_error_occurred = True 
-            # flush before file closed so 'a' later is safe
-            f_out.flush()
         except Exception as e_file:
             logging.error(f"[{worker_id}] Error processing file {input_file_path_str} or writing to {output_csv_path}: {e_file}")
             logging.exception("Traceback for file processing error:")
@@ -666,17 +739,115 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
     logging.info(f"[{worker_id}] Finished processing batch of {len(files_for_worker)} files.")
     return results
 
+# --- Path Normalization Helper ---
+def _normalize_path_for_os(path_str):
+    if sys.platform == "win32" and isinstance(path_str, str):
+        # /mnt/c/Users -> C:\\Users
+        match_mnt = re.match(r"/mnt/([a-zA-Z])/(.*)", path_str)
+        if match_mnt:
+            drive = match_mnt.group(1).upper()
+            rest_of_path = match_mnt.group(2)
+            # Ensure correct Windows path separators using os.sep
+            return f"{drive}:{os.sep}{rest_of_path.replace('/', os.sep)}"
+        # /c/Users -> C:\\Users (common in MSYS/Git Bash contexts)
+        match_drive_letter = re.match(r"/([a-zA-Z])/(.*)", path_str)
+        if match_drive_letter:
+            drive = match_drive_letter.group(1).upper()
+            rest_of_path = match_drive_letter.group(2)
+            # Ensure correct Windows path separators using os.sep
+            return f"{drive}:{os.sep}{rest_of_path.replace('/', os.sep)}"
+    return path_str # Return original if not Windows or no known pattern matches
+# --- End Path Normalization Helper ---
+
+# --- Logging Helper --------------------------------------------------------
+def _safe_add_file_handler(log_path: str):
+    """Attach a FileHandler to the root logger.
+
+    Ensures *log_path*'s directory exists. If creation or handler
+    instantiation fails, it falls back to a file named
+    ``.pymm_fallback.log`` located in the *same* directory.  When that
+    also fails, the error is logged to console and the function returns
+    without raising – the application continues with console-only
+    logging.
+    """
+
+    root_logger = logging.getLogger()
+
+    try:
+        Path(os.path.dirname(log_path)).mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(log_path)
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+        root_logger.addHandler(fh)
+        logging.info("Logging to %s", log_path)
+        return
+    except Exception as primary_err:
+        # First remediation: if path starts with /mnt/<drive>/ or /<drive>/ (common in WSL paths)
+        win_conv_path = None
+        try:
+            mnt_match = re.match(r"^/mnt/([a-zA-Z])/(.*)", log_path)
+            if mnt_match:
+                win_conv_path = f"{mnt_match.group(1).upper()}:{os.sep}{mnt_match.group(2).replace('/', os.sep)}"
+            else:
+                drive_match = re.match(r"^/([a-zA-Z])/(.*)", log_path)
+                if drive_match:
+                    win_conv_path = f"{drive_match.group(1).upper()}:{os.sep}{drive_match.group(2).replace('/', os.sep)}"
+        except Exception:
+            win_conv_path = None
+
+        if win_conv_path:
+            try:
+                Path(os.path.dirname(win_conv_path)).mkdir(parents=True, exist_ok=True)
+                fh_conv = logging.FileHandler(win_conv_path)
+                fh_conv.setLevel(logging.INFO)
+                fh_conv.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+                root_logger.addHandler(fh_conv)
+                logging.warning("Converted WSL-style path '%s' to Windows path and logging to: %s", log_path, win_conv_path)
+                return
+            except Exception:
+                # Fall through to generic fallback
+                pass
+
+        # Generic fallback: write to hidden log in same (possibly failing) directory; if that still fails, use CWD
+        fallback_path = os.path.join(os.path.dirname(log_path), ".pymm_fallback.log")
+        try:
+            Path(os.path.dirname(fallback_path)).mkdir(parents=True, exist_ok=True)
+            fh_fb = logging.FileHandler(fallback_path)
+            fh_fb.setLevel(logging.INFO)
+            fh_fb.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+            root_logger.addHandler(fh_fb)
+            logging.warning("Primary log file '%s' could not be opened (%s). Using fallback '%s'.",
+                            log_path, primary_err, fallback_path)
+        except Exception as fallback_err:
+            # Final attempt: use CWD
+            try:
+                cwd_fallback = os.path.join(os.getcwd(), ".pymm_fallback.log")
+                fh_cwd = logging.FileHandler(cwd_fallback)
+                fh_cwd.setLevel(logging.INFO)
+                fh_cwd.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+                root_logger.addHandler(fh_cwd)
+                logging.error("Both primary ('%s') and output-dir fallback ('%s') failed (%s). Logging to CWD: %s", log_path, fallback_path, fallback_err, cwd_fallback)
+            except Exception as final_err:
+                logging.error("All attempts to create a file handler failed (%s). Continuing without file logging.", final_err)
+
 def execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_binary_path, global_metamap_options):
     logging.info(f"Executing batch processing. Mode: {mode}, Input: {inp_dir_str}, Output: {out_dir_str}")
     logging.info(f"  MetaMap Binary: {global_metamap_binary_path}")
     logging.info(f"  MetaMap Options: {global_metamap_options}")
 
     inp_dir_orig = os.path.abspath(os.path.expanduser(inp_dir_str))
-    out_dir = os.path.abspath(os.path.expanduser(out_dir_str))
+    # Normalize out_dir after abspath for OS compatibility in file operations
+    out_dir_raw = os.path.abspath(os.path.expanduser(out_dir_str))
+    out_dir = _normalize_path_for_os(out_dir_raw)
+    # Make sure the potentially normalized directory exists
     Path(out_dir).mkdir(parents=True, exist_ok=True)
 
-    pid_path = os.path.join(out_dir, PID_FILE)
-    with open(pid_path, 'w') as f_pid: f_pid.write(str(os.getpid()))
+    pid_path_raw = os.path.join(out_dir_raw, PID_FILE) # Use raw path for state file consistent with user input if needed
+    pid_path = _normalize_path_for_os(pid_path_raw)
+    try:
+        with open(pid_path, 'w') as f_pid: f_pid.write(str(os.getpid()))
+    except Exception as e_pid:
+        logging.warning(f"Could not write PID to {pid_path} (raw: {pid_path_raw}): {e_pid}")
 
     all_input_files_orig_str = gather_inputs(inp_dir_orig)
     if not all_input_files_orig_str:
@@ -746,7 +917,9 @@ def execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_bina
             logging.info(f"Launching {len(worker_tasks_args)} Python worker(s) via ProcessPoolExecutor.")
             for args_tuple in worker_tasks_args:
                 worker_id = args_tuple[0]
-                future = executor.submit(process_files_with_pymm_worker, *args_tuple)
+                # Pass the potentially normalized out_dir to workers
+                normalized_args_tuple = (args_tuple[0], args_tuple[1], out_dir, args_tuple[3], args_tuple[4])
+                future = executor.submit(process_files_with_pymm_worker, *normalized_args_tuple)
                 active_futures[future] = worker_id
                 state["active_workers_info"][worker_id]["status"] = "running"
             save_state(out_dir, state)
@@ -785,14 +958,18 @@ def execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_bina
         logging.info(f"Batch processing attempt finished. Total files marked as complete: {final_completed_m}/{len(all_input_files_orig_str)}")
 
     # --- Ensure log file for this output dir ---
-    log_file_name = get_dynamic_log_filename(out_dir)
-    log_path = os.path.join(out_dir, log_file_name)
-    if not any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', None) == log_path for h in logging.getLogger().handlers):
-        fh = logging.FileHandler(log_path)
-        fh.setLevel(logging.INFO)
-        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
-        logging.getLogger().addHandler(fh)
-    print(f"Logs will be written to: {log_path}")
+    log_file_name = get_dynamic_log_filename(out_dir_raw)
+    log_primary_path = _normalize_path_for_os(os.path.join(out_dir_raw, log_file_name))
+
+    # Avoid duplicate handlers across multiple calls
+    root_logger = logging.getLogger()
+    normalized_target = os.path.normcase(os.path.normpath(log_primary_path))
+    already = any(
+        isinstance(h, logging.FileHandler) and os.path.normcase(os.path.normpath(getattr(h, "baseFilename", ""))) == normalized_target
+        for h in root_logger.handlers
+    )
+    if not already:
+        _safe_add_file_handler(log_primary_path)
 
 def handle_configure_settings_menu(): # Renamed to avoid clash if main() has similar name
     configure_all_settings(is_reset=False)
@@ -1061,7 +1238,10 @@ def main():
     if subcmd.lower() != "install":
         configured_metamap_binary_path = get_config_value("metamap_binary_path")
         if not configured_metamap_binary_path: # Check after get_config_value for non-interactive
-            print("Error: METAMAP_BINARY_PATH is not configured. Run 'pymm-cli' (interactive) or 'pymm-cli install' first.", file=sys.stderr)
+            # Ensure basicConfig has run at least once for console output if this is the first logging attempt
+            if not logging.getLogger().hasHandlers():
+                logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stdout)
+            logging.error("Error: METAMAP_BINARY_PATH is not configured. Run 'pymm-cli' (interactive) or 'pymm-cli install' first.")
             sys.exit(1)
     else:
         configured_metamap_binary_path = None # Will be set by install logic
@@ -1072,18 +1252,45 @@ def main():
     MAX_PARALLEL_WORKERS = int(get_config_value("max_parallel_workers", os.getenv("MAX_PARALLEL_WORKERS", str(MAX_PARALLEL_WORKERS_DEFAULT))))
     default_metamap_options = get_config_value("metamap_processing_options", METAMAP_PROCESSING_OPTIONS_DEFAULT)
 
-    subcmd = sys.argv[1]
-    output_dir_for_logging = None 
-    if subcmd in {"start", "resume"} and len(sys.argv) == 4: output_dir_for_logging = os.path.abspath(os.path.expanduser(sys.argv[3]))
-    elif subcmd in {"progress", "pid", "kill", "tail", "completed", "sample", "clearout", "badcsv"} and len(sys.argv) >= 3: output_dir_for_logging = os.path.abspath(os.path.expanduser(sys.argv[2]))
-    elif subcmd == "pending" and len(sys.argv) == 4: output_dir_for_logging = os.path.abspath(os.path.expanduser(sys.argv[3]))
+    # Determine output_dir_for_logging early for consistent log setup
+    raw_output_dir_for_logging = None # Store the path as originally determined
+    if subcmd in {"start", "resume"} and len(sys.argv) == 4: raw_output_dir_for_logging = os.path.abspath(os.path.expanduser(sys.argv[3]))
+    elif subcmd in {"progress", "pid", "kill", "tail", "completed", "sample", "clearout", "badcsv"} and len(sys.argv) >= 3: raw_output_dir_for_logging = os.path.abspath(os.path.expanduser(sys.argv[2]))
+    elif subcmd == "pending" and len(sys.argv) == 4: raw_output_dir_for_logging = os.path.abspath(os.path.expanduser(sys.argv[3]))
+    elif subcmd in {"install", "validate"} and not raw_output_dir_for_logging:
+        default_output_dir_val = get_config_value("default_output_dir")
+        if default_output_dir_val:
+            raw_output_dir_for_logging = os.path.abspath(os.path.expanduser(default_output_dir_val))
 
-    if output_dir_for_logging:
-        Path(output_dir_for_logging).mkdir(parents=True, exist_ok=True)
-        log_file_name = get_dynamic_log_filename(output_dir_for_logging)
-        log_path = os.path.join(output_dir_for_logging, log_file_name)
-        for handler in logging.root.handlers[:]: logging.root.removeHandler(handler)
-        logging.basicConfig(filename=log_path, level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+    final_output_dir_for_logging = _normalize_path_for_os(raw_output_dir_for_logging) if raw_output_dir_for_logging else None
+
+    if final_output_dir_for_logging:
+        Path(final_output_dir_for_logging).mkdir(parents=True, exist_ok=True) # Ensure directory exists
+        
+        # Use the raw (potentially /mnt/c) path for get_dynamic_log_filename logic if it relies on specific path structure
+        log_file_name = get_dynamic_log_filename(raw_output_dir_for_logging if raw_output_dir_for_logging else final_output_dir_for_logging)
+        raw_log_path = os.path.join(raw_output_dir_for_logging if raw_output_dir_for_logging else final_output_dir_for_logging, log_file_name) # Build raw path
+        final_log_path = _normalize_path_for_os(raw_log_path) # Normalize final log_path for FileHandler
+        
+        # Ensure the directory for the (potentially normalized) log_path exists
+        Path(os.path.dirname(final_log_path)).mkdir(parents=True, exist_ok=True)
+        
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+        
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        root_logger.addHandler(console_handler)
+        root_logger.setLevel(logging.INFO)
+
+        existing = any(
+            isinstance(h, logging.FileHandler) and
+            os.path.normcase(os.path.normpath(getattr(h, "baseFilename", ""))) == os.path.normcase(os.path.normpath(final_log_path))
+            for h in root_logger.handlers
+        )
+        if not existing:
+            _safe_add_file_handler(final_log_path)
 
     if subcmd in {"start", "resume"}:
         if len(sys.argv) != 4: logging.error(f"Error: {subcmd} command requires INPUT_DIR and OUTPUT_DIR arguments."); print(f"Usage: pymm-cli {subcmd} INPUT_DIR OUTPUT_DIR"); sys.exit(1)

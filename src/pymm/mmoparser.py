@@ -85,50 +85,52 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
         pos_len_val = None
         pos_nodes = candidate.getElementsByTagName("PositionalInfo")
         if pos_nodes:
-            if pos_nodes[0].childNodes:
-                raw_pos_text = pos_nodes[0].childNodes[0].data.strip()
-            else:
-                # Some MetaMap builds encode positional info as attributes
-                attr_start = pos_nodes[0].getAttribute("start") or pos_nodes[0].getAttribute("Start") or ""
-                attr_len = pos_nodes[0].getAttribute("length") or pos_nodes[0].getAttribute("Length") or ""
-                if attr_start and attr_len:
-                    raw_pos_text = f"{attr_start}/{attr_len}"
+            raw_pos_tokens = []
+            for pn in pos_nodes:
+                if pn.childNodes and pn.childNodes[0].data.strip():
+                    raw_pos_tokens.append(pn.childNodes[0].data.strip())
                 else:
-                    raw_pos_text = ""
+                    attr_start = pn.getAttribute("start") or pn.getAttribute("Start") or ""
+                    attr_len = pn.getAttribute("length") or pn.getAttribute("Length") or ""
+                    if attr_start and attr_len:
+                        raw_pos_tokens.append(f"{attr_start}/{attr_len}")
+            raw_pos_text = " ".join(raw_pos_tokens).strip()
+        else:
+            raw_pos_text = ""
 
-            if raw_pos_text:
-                # Positional tokens may be separated by space or semicolon. Each token is start/len
-                all_tokens = []
-                for token_chunk in raw_pos_text.replace(";", " ").split():
-                    token_chunk = token_chunk.strip()
-                    if token_chunk and "/" in token_chunk:
-                        all_tokens.append(token_chunk)
+        if raw_pos_text:
+            # Positional tokens may be separated by space or semicolon. Each token is start/len
+            all_tokens = []
+            for token_chunk in raw_pos_text.replace(";", " ").split():
+                token_chunk = token_chunk.strip()
+                if token_chunk and "/" in token_chunk:
+                    all_tokens.append(token_chunk)
 
-                if all_tokens:
-                    try:
-                        starts = []
-                        ends = []
-                        for tok in all_tokens:
-                            s_str, l_str = tok.split("/", 1)
-                            s = int(s_str)
-                            l = int(l_str)
-                            starts.append(s)
-                            ends.append(s + l)
-                        # Calculate length based on 0-based start before converting start to 1-based
-                        min_start_0_based = min(starts)
-                        pos_len_val = max(ends) - min_start_0_based
-                        pos_start_val = min_start_0_based + 1 # Make start 1-based to match Java
-                    except Exception:
-                        pos_start_val = None
-                        pos_len_val = None
+            if all_tokens:
+                try:
+                    starts = []
+                    ends = []
+                    for tok in all_tokens:
+                        s_str, l_str = tok.split("/", 1)
+                        s = int(s_str)
+                        l = int(l_str)
+                        starts.append(s)
+                        ends.append(s + l)
+                    # Calculate length based on 0-based start before converting start to 1-based
+                    min_start_0_based = min(starts)
+                    pos_len_val = max(ends) - min_start_0_based
+                    pos_start_val = min_start_0_based + 1 # Make start 1-based to match Java
+                except Exception:
+                    pos_start_val = None
+                    pos_len_val = None
         
         # Try alternate position source: direct Position tag (common in MetaMap 2020 output)
         if pos_start_val is None:
             position_nodes = candidate.getElementsByTagName("Position")
             if position_nodes and position_nodes[0].hasAttribute("x") and position_nodes[0].hasAttribute("y"):
                 try:
-                    # This directly mimics Java's use of Position x,y attributes
-                    pos_start_val = int(position_nodes[0].getAttribute("x"))
+                    # Convert to 1-based start for consistency
+                    pos_start_val = int(position_nodes[0].getAttribute("x")) + 1
                     pos_len_val = int(position_nodes[0].getAttribute("y"))
                 except (ValueError, IndexError):
                     pass
@@ -188,6 +190,12 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
                         phrase_start_val = None
                         phrase_len_val = None
 
+        # If concept-specific coordinates were not found, but phrase-specific ones were,
+        # fall back to using phrase coordinates for the concept as well.
+        if pos_start_val is None and phrase_start_val is not None:
+            pos_start_val = phrase_start_val
+            pos_len_val = phrase_len_val
+
         # ---- Extract full phrase text ----
         phrase_text_val = None
         if phrase_node:
@@ -245,6 +253,8 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
                     utterance_id_val = int(utt_num_nodes[0].childNodes[0].data)
                 except (ValueError, IndexError):
                     utterance_id_val = None
+
+        safe_len_val = pos_len_val if pos_len_val is not None else len(phrase_text_val or "")
 
         return cls(
             cui=get_data(candidate, candidate_mapping['cui']),
