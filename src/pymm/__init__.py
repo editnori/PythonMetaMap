@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
-from pkg_resources import get_distribution, DistributionNotFound
+# use the stdlib importlib.metadata on Py ≥3.8; fall back to back-port otherwise
+try:
+    from importlib.metadata import version as _pkg_version, PackageNotFoundError
+except ImportError:  # Python <3.8 — use the back-port
+    from importlib_metadata import version as _pkg_version, PackageNotFoundError
 
 try:
-    # Change here if project is renamed and does not equal the package name
-    dist_name = __name__
-    __version__ = get_distribution(dist_name).version
-except DistributionNotFound:
+    # Change here if project is renamed and does not equal the distribution name
+    dist_name = 'pythonmetamap'
+    __version__ = _pkg_version(dist_name)
+except PackageNotFoundError:
     __version__ = 'unknown'
 
 from .pymm import Metamap, MetamapStuck
