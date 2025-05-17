@@ -260,7 +260,10 @@ def download_and_extract(url, extract_to_dir, is_source=False):
     def _is_within_directory(directory, target):
         abs_directory = os.path.abspath(directory)
         abs_target = os.path.abspath(target)
-        return os.path.commonpath([abs_directory]) == os.path.commonpath([abs_directory, abs_target])
+        try:
+            return os.path.commonpath([abs_directory, abs_target]) == abs_directory
+        except ValueError:
+            return False
 
     try:
         with tarfile.open(tar_path, mode) as tar:

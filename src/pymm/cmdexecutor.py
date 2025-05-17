@@ -29,11 +29,14 @@ class MetamapCommand:
         
         current_options = []
         if env_options_str:
-            # Split the string into a list of options
-            # Handles options like "-y" or "--lexicon db" correctly if they are space-separated
-            current_options = shlex.split(env_options_str)
-            if self.debug:
-                print(f"Using METAMAP_PROCESSING_OPTIONS from environment: {current_options}")
+            try:
+                current_options = shlex.split(env_options_str)
+                if self.debug:
+                    print(f"Using METAMAP_PROCESSING_OPTIONS from environment: {current_options}")
+            except ValueError as e:
+                print(f"Warning: Invalid METAMAP_PROCESSING_OPTIONS format: {e}")
+                print("Falling back to default options")
+                current_options = default_options
         else:
             current_options = default_options
             if self.debug:

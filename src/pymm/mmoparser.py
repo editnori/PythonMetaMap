@@ -40,7 +40,8 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
             while child is not None and child.nodeType != node.TEXT_NODE:
                 child = child.nextSibling
             if child and child.nodeType == node.TEXT_NODE:
-                return child.data
+                text = child.data.strip() if child.data else ""
+                return text
             return ""
 
         # Extract Source vocabulary strings (recursively found under <Source> within <Sources>)
@@ -58,6 +59,9 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
                     token = token.strip()
                     if token:
                         sources.append(token)
+
+        # De-duplicate while preserving order
+        sources = list(dict.fromkeys(sources))
 
         # Extract first PositionalInfo (e.g., "123/8") to character start & length
         pos_start_val = None
@@ -229,7 +233,11 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
             cui=get_data(candidate, candidate_mapping['cui']),
             score=get_data(candidate, candidate_mapping['score']),
             matched=get_data(candidate, candidate_mapping['matched']),
-            semtypes=[semtype.childNodes[0].data for semtype in candidate.getElementsByTagName(candidate_mapping['semtypes'])],
+            semtypes=[
+                st.childNodes[0].data if st.childNodes else ""
+                for st in candidate.getElementsByTagName(candidate_mapping['semtypes'])
+                if st.childNodes and st.childNodes[0].nodeType == st.TEXT_NODE
+            ],
             sources=sources,
             ismapping=is_mapping,
             isnegated=get_data(candidate, candidate_mapping['isnegated']),

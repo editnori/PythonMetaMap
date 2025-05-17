@@ -541,6 +541,9 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
         for f_path in files_for_worker: results.append((os.path.basename(f_path), "0ms", True))
         return results
     try:
+        # Ensure worker respects specific MetaMap options
+        if current_metamap_options:
+            os.environ["METAMAP_PROCESSING_OPTIONS"] = current_metamap_options
         mm = PyMetaMap(current_metamap_binary_path, debug=False) 
     except Exception as e:
         logging.error(f"[{worker_id}] Failed to initialize PyMetaMap with binary '{current_metamap_binary_path}': {e}")
@@ -637,6 +640,8 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                         except Exception as e_concept:
                             logging.error(f"[{worker_id}] Error processing/writing concept for {input_file_basename}: {e_concept} - Concept: {concept}")
                             processing_error_occurred = True 
+            # flush before file closed so 'a' later is safe
+            f_out.flush()
         except Exception as e_file:
             logging.error(f"[{worker_id}] Error processing file {input_file_path_str} or writing to {output_csv_path}: {e_file}")
             logging.exception("Traceback for file processing error:")
