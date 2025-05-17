@@ -2,11 +2,15 @@ import argparse
 import os
 import sys
 import json
+import csv
+=======
 import multiprocessing as mp
 from .pymm import Metamap, MetamapStuck
 
 
 def _find_default_metamap():
+    """Return the default MetaMap binary path if installed relative to repo."""
+=======
     """Return a default MetaMap binary path if installed via install_metamap.sh."""
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
     candidate = os.path.join(repo_root, "metamap_install", "public_mm", "bin", "metamap20")
@@ -26,9 +30,16 @@ def _process_file(args):
             return basename, False, 'empty input'
         mmos = mm.parse([text], timeout=timeout)
         concepts = [c for mmo in mmos for c in mmo]
+        with open(out_csv, 'w', encoding='utf-8', newline='') as out_f:
+            writer = csv.writer(out_f)
+            writer.writerow(['cui', 'score', 'matched'])
+            for c in concepts:
+                writer.writerow([c.cui, c.score, c.matched])
+=======
         with open(out_csv, 'w', encoding='utf-8') as out_f:
             for c in concepts:
                 out_f.write(f"{c.cui},{c.score},{c.matched}\n")
+
         return basename, True, None
     except Exception as exc:  # broad catch to report failures
         return basename, False, str(exc)
