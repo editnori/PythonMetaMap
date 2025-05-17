@@ -104,12 +104,11 @@ def prompt_and_save_config_value(key, prompt_text, explanation="", is_essential=
         else:
             if key == "metamap_binary_path":
                 meta_install_dir = os.path.abspath("metamap_install")
-                source_dir_name = "MetaMap-src-public_mm_2020"
-                expected_public_mm_path = os.path.join(meta_install_dir, source_dir_name, "public_mm")
-                expected_metamap_binary = os.path.join(expected_public_mm_path, "bin", "metamap")
-
-                if os.path.isfile(expected_metamap_binary):
-                    value_to_propose = expected_metamap_binary
+                # Use helper function to simplify; break early if found
+                pass
+                auto_found = discover_metamap_binary(meta_install_dir)
+                if auto_found:
+                    value_to_propose = auto_found
                     hint_type = "found"
             
             if value_to_propose is None and code_default:
@@ -177,14 +176,11 @@ def prompt_and_save_config_value(key, prompt_text, explanation="", is_essential=
 
         if eof_fallback_value is None and key == "metamap_binary_path":
             meta_install_dir = os.path.abspath("metamap_install")
-            source_dir_name = "MetaMap-src-public_mm_2020"
-            expected_public_mm_path = os.path.join(meta_install_dir, source_dir_name, "public_mm")
-            expected_metamap_binary = os.path.join(expected_public_mm_path, "bin", "metamap")
-            if os.path.isfile(expected_metamap_binary):
-                eof_fallback_value = expected_metamap_binary
-        
-        if eof_fallback_value is None and code_default:
-            eof_fallback_value = code_default
+            # Use helper function to simplify; break early if found
+            pass
+            auto_found = discover_metamap_binary(meta_install_dir)
+            if auto_found:
+                eof_fallback_value = auto_found
         
         if is_essential and eof_fallback_value is None:
             print(f"Error: Essential setting '{key}' could not be determined via EOF and no fallbacks exist.", file=sys.stderr)
@@ -240,6 +236,131 @@ ERROR_FOLDER = "error_files"
 CSV_HEADER = ["CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Positions"]
 START_MARKER_PREFIX = "META_BATCH_START_NOTE_ID:"
 END_MARKER_PREFIX = "META_BATCH_END_NOTE_ID:"
+
+# --- Utility: search for a MetaMap binary under metamap_install (cross-platform friendly) ---
+def discover_metamap_binary(search_root="metamap_install"):
+    """Return path to first plausible MetaMap executable inside search_root, else None."""
+    if not os.path.isdir(search_root):
+        return None
+    candidate_names = {
+        "metamap", "metamap20",
+        "metamap.exe", "metamap20.exe",
+        "metamap.bat", "metamap20.bat",
+    }
+    for root, dirs, files in os.walk(search_root):
+        for fname in files:
+            if fname.lower() in candidate_names:
+                return os.path.abspath(os.path.join(root, fname))
+    return None
+
+# --- Fancy ASCII Banner (imported from old bash script) ---
+ASCII_BANNER = r"""
+  __  __  _____  _____    _    __  __    _    ____     ____ _      ___
+ |  \/  || ____||_   _|  / \  |  \/  |  / \  |  _ \   / ___| |    |_ _|
+ | |\/| ||  _|    | |   / _ \ | |\/| | / _ \ | |_) | | |   | |     | |
+ | |  | || |___   | |  / ___ \| |  | |/ ___ \|  __/  | |___| |___  | |
+ |_|  |_||_____| |___|/_/   \_\_|  |_/_/   \_\_|     \____||_____||___|
+"""
+
+# --- MetaMap Server Management Helpers (lightweight wrappers) ---
+# These simply shell out to underlying MetaMap control scripts if present.
+# They are intentionally tolerant – they will not raise if the commands are missing.
+
+def _run_quiet(cmd_list, cwd=None):
+    try:
+        subprocess.run(cmd_list, cwd=cwd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
+
+def start_metamap_servers(public_mm_dir):
+    bin_path = os.path.join(public_mm_dir, "bin")
+    skr_ctl = os.path.join(bin_path, "skrmedpostctl")
+    wsd_ctl = os.path.join(bin_path, "wsdserverctl")
+    mmserver = os.path.join(bin_path, "mmserver20")
+    if not (os.path.isfile(skr_ctl) and os.path.isfile(wsd_ctl) and os.path.isfile(mmserver)):
+        print("MetaMap server scripts not found in", bin_path)
+        return
+    print("Launching Tagger, WSD, and mmserver20…")
+    _run_quiet([skr_ctl, "start"])
+    _run_quiet([wsd_ctl, "start"])
+    # Launch mmserver20 in background
+    try:
+        subprocess.Popen([mmserver])
+    except Exception as e:
+        print("Could not start mmserver20:", e)
+    print("Start commands issued. Use 'Status' to verify.")
+
+def stop_metamap_servers(public_mm_dir):
+    bin_path = os.path.join(public_mm_dir, "bin")
+    skr_ctl = os.path.join(bin_path, "skrmedpostctl")
+    wsd_ctl = os.path.join(bin_path, "wsdserverctl")
+    if os.path.isfile(skr_ctl): _run_quiet([skr_ctl, "stop"])
+    if os.path.isfile(wsd_ctl): _run_quiet([wsd_ctl, "stop"])
+    # Kill mmserver20 processes
+    _run_quiet(["pkill", "-f", "mmserver20"])
+    print("Stop commands sent.")
+
+def status_metamap_servers(public_mm_dir):
+    bin_path = os.path.join(public_mm_dir, "bin")
+    skr_ctl = os.path.join(bin_path, "skrmedpostctl")
+    wsd_ctl = os.path.join(bin_path, "wsdserverctl")
+    mmserver_proc = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    running_mmservers = mmserver_proc.stdout.decode().strip().split() if mmserver_proc.returncode == 0 else []
+    
+    print("--- SKR/MedPost Tagger Status ---")
+    if os.path.isfile(skr_ctl):
+        subprocess.run([skr_ctl, "status"], check=False)
+    else:
+        print(f"skrmedpostctl not found at {skr_ctl}")
+
+    print("--- WSD Server Status ---")
+    if os.path.isfile(wsd_ctl):
+        subprocess.run([wsd_ctl, "status"], check=False)
+    else:
+        print(f"wsdserverctl not found at {wsd_ctl}")
+
+    print("--- MMServer20 Status (via pgrep) ---")
+    if running_mmservers:
+        print("mmserver20 running – PIDs:", ", ".join(running_mmservers))
+    else:
+        print("mmserver20 not detected in process list.")
+
+# --- Auto-start helper -------------------------------------------------
+def _is_server_process_running(command_path, server_name_in_output):
+    """Helper to check if a server process (tagger/wsd) is running via its ctl script."""
+    if not os.path.isfile(command_path):
+        print(f"DEBUG: {os.path.basename(command_path)} not found at {command_path}")
+        return False
+    try:
+        result = subprocess.run([command_path, "status"], capture_output=True, text=True, timeout=10, check=False)
+        # Look for phrases like "is running" and avoid "is stopped" or "not running"
+        output_lower = result.stdout.lower() + result.stderr.lower()
+        # Crude check: MetaMap ctl scripts often include server name then "is running"
+        # Example: "SKR/MedPost Part-of-Speech Tagger Server (pid 12345) is running."
+        # Example: "WSD Server (pid 67890) is running."
+        # Example: "SKR/MedPost Part-of-Speech Tagger Server is stopped."
+        if server_name_in_output.lower() in output_lower and "is running" in output_lower and "stopped" not in output_lower:
+            print(f"DEBUG: {server_name_in_output} detected as RUNNING from status output.")
+            return True
+        print(f"DEBUG: {server_name_in_output} NOT detected as running. Status output:\n{result.stdout}\n{result.stderr}")
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"DEBUG: Timeout checking status for {os.path.basename(command_path)}.")
+        return False # Assume not running on timeout
+    except Exception as e:
+        print(f"DEBUG: Error checking status for {os.path.basename(command_path)}: {e}")
+        return False # Assume not running on error
+
+def ensure_servers_running():
+    """Start Tagger, WSD, and mmserver20 if they are not running.
+
+    NOTE: Disabled in lightweight configuration – function will exit immediately so that
+    MetaMap runs without attempting to launch or manage additional servers.
+    """
+    print("Info: ensure_servers_running() disabled – skipping MetaMap server startup.")
+    return  # <-- Early return prevents any server-management logic below
+    # The original implementation is retained below for reference but will never execute.
 
 # --- Helper Functions (rglob_compat, load_state, etc.) ---
 def rglob_compat(directory, pattern):
@@ -651,6 +772,36 @@ def execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_bina
         save_state(out_dir, state)
         logging.info(f"Batch processing attempt finished. Total files marked as complete: {final_completed_m}/{len(all_input_files_orig_str)}")
 
+    # --- Ensure log file for this output dir ---
+    log_file_name = get_dynamic_log_filename(out_dir)
+    log_path = os.path.join(out_dir, log_file_name)
+    if not any(isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', None) == log_path for h in logging.getLogger().handlers):
+        fh = logging.FileHandler(log_path)
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+        logging.getLogger().addHandler(fh)
+    print(f"Logs will be written to: {log_path}")
+
+    # --- Launch detached background process ---
+    import shlex, sys
+    cmd = [sys.executable, '-m', 'pymm.mimic_controller', 'start', inp_dir_str, out_dir_str]
+    try:
+        if os.name == 'posix':
+            nohup_out = open(os.path.join(out_dir, 'nohup.out'), 'ab')
+            proc = subprocess.Popen(cmd, stdout=nohup_out, stderr=nohup_out, preexec_fn=os.setpgrp)
+        else:  # Windows
+            DETACHED_PROCESS = 0x00000008
+            proc = subprocess.Popen(cmd, creationflags=DETACHED_PROCESS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        with open(os.path.join(out_dir, PID_FILE), 'w') as fpid:
+            fpid.write(str(proc.pid))
+        print(f"Batch started in background (PID {proc.pid}). You can exit this menu.")
+    except Exception as e_bg:
+        print(f"Failed to launch background process: {e_bg}\nRunning in foreground instead…")
+        execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_binary_path, global_metamap_options)
+
+    # returning immediately (do not block interactive menu)
+    return
+
 def handle_configure_settings_menu(): # Renamed to avoid clash if main() has similar name
     configure_all_settings(is_reset=False)
 
@@ -686,20 +837,16 @@ def handle_run_batch_processing():
 
     print(f"MetaMap Options: '{metamap_opts}'")
     print(f"Max Parallel Workers: {MAX_PARALLEL_WORKERS}")
+
+    # Auto-start MetaMap servers if needed (disabled)
+    # ensure_servers_running()
+
     mode = "start" 
     if os.listdir(out_dir) and any(f.endswith('.csv') or f == STATE_FILE for f in os.listdir(out_dir)):
         if input("Output directory is not empty. Resume previous job? (yes/no, default: no): ").strip().lower() == 'yes':
             mode = "resume"
     print(f"Starting batch processing in '{mode}' mode...")
     execute_batch_processing(inp_dir, out_dir, mode, metamap_binary_p, metamap_opts)
-
-def handle_manage_servers():
-    print("\n--- Manage MetaMap Servers (Info) ---")
-    print("This tool does not directly manage MetaMap support servers (WSD, SKR/MedPost).")
-    print("If your MetaMap options require them, please start/stop them manually using scripts")
-    print("like 'skrmedpostctl' and 'wsdserverctl' found in your MetaMap installation's 'bin' directory.")
-    mbp = get_config_value("metamap_binary_path")
-    if mbp: print(f"  (Your configured MetaMap binary seems to be at: {mbp})")
 
 def handle_view_progress(output_dir_str=None):
     print("\n--- View Batch Progress ---")
@@ -749,6 +896,65 @@ def handle_view_progress(output_dir_str=None):
         else: print("  No valid file timing data to calculate average or ETR.")
     else: print("  No file timing data recorded yet.")
 
+def handle_install_metamap():
+    print("\n--- Install MetaMap ---")
+    try:
+        from . import install_metamap
+    except ImportError as imp_err:
+        print("Could not import install_metamap module:", imp_err)
+        return
+    installed_path = install_metamap.main()
+    if installed_path and os.path.isfile(installed_path):
+        set_config_value("metamap_binary_path", installed_path)
+        print("MetaMap installed successfully at:", installed_path)
+    else:
+        print("MetaMap installation did not report a usable binary. Check above output.")
+
+def handle_monitor_dashboard():
+    print("\n--- Monitor Dashboard (live) ---")
+    import psutil, time
+    default_output = get_config_value("default_output_dir", "./output_csvs")
+    out_dir = input(f"Output dir of running batch (default: {default_output}): ").strip() or default_output
+    state_path = os.path.join(out_dir, STATE_FILE)
+    pid_path = os.path.join(out_dir, PID_FILE)
+    if not os.path.exists(state_path):
+        print("State file not found – batch may not be running.")
+        return
+    try:
+        pid = int(open(pid_path).read().strip()) if os.path.exists(pid_path) else None
+    except Exception:
+        pid = None
+    try:
+        while True:
+            os.system('cls' if os.name == 'nt' else 'clear')
+            print("=== MetaMap Batch Dashboard ===")
+            print(f"Output dir : {out_dir}")
+            if pid:
+                print(f"Main PID   : {pid}")
+                if psutil and psutil.pid_exists(pid):
+                    p = psutil.Process(pid)
+                    cpu = p.cpu_percent(interval=0.5)
+                    mem = p.memory_info().rss / (1024*1024)
+                    print(f"CPU        : {cpu:.1f}%  |  RAM: {mem:.1f} MB")
+                else:
+                    print("Process not running.")
+            with open(state_path) as f:
+                state = json.load(f)
+            total = state.get('total_overall', 0)
+            done = state.get('completed_overall_markers', 0)
+            pct = done/total*100 if total else 0
+            print(f"Progress   : {done}/{total} ({pct:.1f}%)")
+            active = state.get('active_workers_info', {})
+            if active:
+                print("Active workers:")
+                for wid, info in active.items():
+                    print(f"  {wid}: {info.get('status')} – {info.get('current_file','')}")
+            else:
+                print("No active workers recorded.")
+            time.sleep(2)
+    except KeyboardInterrupt:
+        print("\nExiting dashboard…")
+
 def interactive_main_loop():
     if not logging.getLogger().hasHandlers():
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stdout)
@@ -761,66 +967,104 @@ def interactive_main_loop():
         # If still no metamap_binary_path, it would have exited in configure_all_settings
 
     while True:
-        print("\n--- Python MetaMap Orchestrator ---")
+        print("\n" + ASCII_BANNER)
+        print("--- Python MetaMap Orchestrator ---")
+        print("0. Install MetaMap (auto-download)")
         print("1. Configure All Settings (Re-prompt all)")
         print("2. Run MetaMap Batch Processing")
-        print("3. Manage MetaMap Servers (Info)")
+        print("3. Monitor Dashboard (live)")
         print("4. View Batch Progress")
         print("5. View/Tail Log File")
         print("6. List Pending/Completed Files")
         print("7. Reset All Saved Configurations to Defaults")
         print("8. Exit")
-        try: choice = input("Enter your choice (1-8): ").strip()
-        except EOFError: print("\nExiting due to EOF."); break
-        if choice == '1': configure_all_settings(is_reset=False) # Re-prompt all
-        elif choice == '2': handle_run_batch_processing()
-        elif choice == '3': handle_manage_servers()
-        elif choice == '4': handle_view_progress()
-        elif choice == '5': 
+        try:
+            choice = input("Enter your choice (0-8): ").strip()
+        except EOFError:
+            print("\nExiting due to EOF.")
+            break
+        if choice == '0':
+            handle_install_metamap()
+        elif choice == '1':
+            configure_all_settings(is_reset=False)  # Re-prompt all
+        elif choice == '2':
+            handle_run_batch_processing()
+        elif choice == '3':
+            handle_monitor_dashboard()
+        elif choice == '4':
+            handle_view_progress()
+        elif choice == '5':
             default_out = get_config_value("default_output_dir", "./output_csvs")
             log_out_dir = input(f"Enter output dir of the log (default: {default_out}): ").strip() or default_out
             if os.path.isdir(log_out_dir):
-                log_fn = get_dynamic_log_filename(log_out_dir); log_fp = os.path.join(log_out_dir, log_fn)
-                if os.path.exists(log_fp): 
+                log_fn = get_dynamic_log_filename(log_out_dir)
+                log_fp = os.path.join(log_out_dir, log_fn)
+                if os.path.exists(log_fp):
                     lines = input("How many lines to tail (default 20)? ").strip() or "20"
                     subprocess.run(["tail", "-n", lines, log_fp])
-                else: print(f"Log file not found: {log_fp}")
-            else: print(f"Directory not found: {log_out_dir}")
-        elif choice == '6': 
-            default_out_p=get_config_value("default_output_dir","./output_csvs");default_in_p=get_config_value("default_input_dir","./input_notes")
-            pend_out_dir=input(f"Output dir (def: {default_out_p}): ").strip() or default_out_p; pend_in_dir=input(f"Input dir (def: {default_in_p}): ").strip() or default_in_p
+                else:
+                    print(f"Log file not found: {log_fp}")
+            else:
+                print(f"Directory not found: {log_out_dir}")
+        elif choice == '6':
+            default_out_p = get_config_value("default_output_dir", "./output_csvs")
+            default_in_p = get_config_value("default_input_dir", "./input_notes")
+            pend_out_dir = input(f"Output dir (def: {default_out_p}): ").strip() or default_out_p
+            pend_in_dir = input(f"Input dir (def: {default_in_p}): ").strip() or default_in_p
             if os.path.isdir(pend_in_dir) and os.path.isdir(pend_out_dir):
-                all_ins=gather_inputs(pend_in_dir);pending_fs=[];completed_fs=[]
-                for f_i in all_ins: 
-                    base_f_i=os.path.basename(f_i)
-                    out_csv_f_i=derive_output_csv_path(pend_out_dir,base_f_i)
-                    if check_output_file_completion(out_csv_f_i,base_f_i):
+                all_ins = gather_inputs(pend_in_dir)
+                pending_fs = []
+                completed_fs = []
+                for f_i in all_ins:
+                    base_f_i = os.path.basename(f_i)
+                    out_csv_f_i = derive_output_csv_path(pend_out_dir, base_f_i)
+                    if check_output_file_completion(out_csv_f_i, base_f_i):
                         completed_fs.append(base_f_i)
-                    else: 
+                    else:
                         pending_fs.append(base_f_i)
-                print(f"\nPending ({len(pending_fs)}): "); [print(f"  {f}") for f in pending_fs[:10]]; print("..." if len(pending_fs)>10 else "")
-                print(f"Completed ({len(completed_fs)}): "); [print(f"  {f}") for f in completed_fs[:10]]; print("..." if len(completed_fs)>10 else "")
-            else: print("Invalid input/output dir for pending/completed.")
-        elif choice == '7': handle_reset_settings()
-        elif choice == '8': print("Exiting."); break
-        else: print("Invalid choice. Please try again.")
+                print(f"\nPending ({len(pending_fs)}): ")
+                [print(f"  {f}") for f in pending_fs[:10]]
+                print("..." if len(pending_fs) > 10 else "")
+                print(f"Completed ({len(completed_fs)}): ")
+                [print(f"  {f}") for f in completed_fs[:10]]
+                print("..." if len(completed_fs) > 10 else "")
+            else:
+                print("Invalid input/output dir for pending/completed.")
+        elif choice == '7':
+            handle_reset_settings()
+        elif choice == '8':
+            print("Exiting.")
+            break
+        else:
+            print("Invalid choice. Please try again.")
 
 def main():
     # Initial setup of basic console logging for any early messages or config prompts
     if not logging.getLogger().hasHandlers():
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stdout)
     
-    # Determine if running in interactive mode or processing a subcommand
-    if len(sys.argv) <= 1 or (len(sys.argv) == 2 and sys.argv[1].lower() == 'interactive'):
+    # Default to the interactive menu when no sub-command is supplied.
+    if len(sys.argv) == 1:
+        interactive_main_loop()
+        sys.exit(0)
+
+    # Legacy alias: `pymm-cli interactive` still works but is no longer required.
+    if len(sys.argv) == 2 and sys.argv[1].lower() == 'interactive':
         interactive_main_loop()
         sys.exit(0)
 
     # --- Subcommand Processing --- 
     # Essential configs are checked first. This will prompt if they are missing.
-    configured_metamap_binary_path = get_config_value("metamap_binary_path")
-    if not configured_metamap_binary_path: # Check after get_config_value for non-interactive
-        print("Error: METAMAP_BINARY_PATH is not configured. Run 'pymm-cli' for interactive setup or set it in config/env.", file=sys.stderr)
-        sys.exit(1)
+    subcmd = sys.argv[1]
+
+    # Defer METAMAP_BINARY_PATH check if the command is 'install'
+    if subcmd.lower() != "install":
+        configured_metamap_binary_path = get_config_value("metamap_binary_path")
+        if not configured_metamap_binary_path: # Check after get_config_value for non-interactive
+            print("Error: METAMAP_BINARY_PATH is not configured. Run 'pymm-cli' (interactive) or 'pymm-cli install' first.", file=sys.stderr)
+            sys.exit(1)
+    else:
+        configured_metamap_binary_path = None # Will be set by install logic
     
     # Other global settings also fetched using get_config_value
     # This allows them to be influenced by config file or env vars before subcommand logic runs.
@@ -844,6 +1088,8 @@ def main():
     if subcmd in {"start", "resume"}:
         if len(sys.argv) != 4: logging.error(f"Error: {subcmd} command requires INPUT_DIR and OUTPUT_DIR arguments."); print(f"Usage: pymm-cli {subcmd} INPUT_DIR OUTPUT_DIR"); sys.exit(1)
         inp_dir_str, out_dir_str = sys.argv[2:4]
+        # Auto-start MetaMap servers if needed (disabled)
+        # ensure_servers_running()
         current_metamap_options = get_config_value("metamap_processing_options", default_metamap_options)
         execute_batch_processing(inp_dir_str, out_dir_str, subcmd, configured_metamap_binary_path, current_metamap_options)
     
@@ -895,6 +1141,23 @@ def main():
         if bad_files_summary: print("\n--- Files with Issues (first 20) ---"); [print(f"  {f}") for f in bad_files_summary[:20]];
         if len(bad_files_summary) > 20: print(f"  ...and {len(bad_files_summary) - 20} more.")
         sys.exit(0)
+
+    elif subcmd == "install":
+        # New sub-command: download & install MetaMap automatically using bundled helper script
+        try:
+            from . import install_metamap
+        except ImportError as ie_imp:
+            print(f"Error: Could not import install_metamap module: {ie_imp}", file=sys.stderr)
+            sys.exit(1)
+        installed_binary_path = install_metamap.main()
+        if installed_binary_path and os.path.isfile(installed_binary_path):
+            print(f"MetaMap installed successfully at: {installed_binary_path}")
+            # Persist the discovered path into the user config so future runs pick it up automatically
+            set_config_value("metamap_binary_path", installed_binary_path)
+            sys.exit(0)
+        else:
+            print("MetaMap installation did not complete successfully or binary not found.", file=sys.stderr)
+            sys.exit(1)
 
     else:
         if not (len(sys.argv) <= 1 or (len(sys.argv) == 2 and sys.argv[1].lower() == 'interactive')):

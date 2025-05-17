@@ -5,26 +5,25 @@ PythonMetaMap provides a lightweight Python interface for running [MetaMap](http
 This repository bundles a lightweight Python wrapper around the MetaMap 2020 binaries.  It provides
 
 * a parser that exposes source vocabularies and positional information;
-* a simple command line interface `pymm-cli` for batch processing of text files; and
+* a fully-featured CLI (`pymm-cli`) that can **download & install MetaMap automatically**, spin up its support servers, and run large-scale batch jobs with progress tracking; and
 * a helper script `install_metamap.py` which can download and install MetaMap automatically.
 
-## Installing
-
-Clone the repository and install in editable mode:
+## Installation (3-step quick start)
 
 ```bash
+# 1.  Install Python dependencies (editable mode shown here)
 pip install -e .
+
+# 2.  One-click MetaMap install (downloads ~1 GB, compiles, config saved)
+pymm-cli install
+
+# 3.  Launch the interactive menu and follow the prompts
+pymm-cli
 ```
 
-To download and install MetaMap automatically, run the helper script:
+Behind the scenes, step 2 downloads the MetaMap 2020 source code into `metamap_install/`, runs its `install.sh`, and records the resulting binary path inside `~/.pymm_controller_config.json`.  No environment variables are required.
 
-```bash
-python install_metamap.py
-```
-
-This places the MetaMap binaries under `metamap_install/public_mm`. If `pymm-cli` cannot locate a MetaMap binary automatically, provide the path via `--metamap-path` or the `METAMAP_PATH` environment variable.
-
-## Command Line Usage
+## Command Line Usage (non-interactive)
 
 Process a directory of `.txt` files and create `.csv` outputs:
 
@@ -32,7 +31,7 @@ Process a directory of `.txt` files and create `.csv` outputs:
 pymm-cli <input_dir> <output_dir>
 ```
 
-The tool writes progress to `<output_dir>/.pymm_state.json` so interrupted runs can be resumed. CSV output is written in a safe format using Python's `csv` module.
+The tool writes progress to `<output_dir>/.mimic_state.json`; interrupted runs can be resumed automatically. CSV output is written safely using Python's `csv` module.
 
 ## Library Example
 
@@ -65,12 +64,20 @@ This project is maintained by **Dr. Layth Qassem** and takes inspiration from th
 
 ## Prerequisites
 
-1.  **Python:** Python 3.8+ is recommended.
-2.  **MetaMap:** You need a functional MetaMap installation.
-    *   Download and install MetaMap from the [NLM MetaMap Page](https://metamap.nlm.nih.gov/). Follow the official installation instructions for your operating system.
-    *   For Windows users, installing MetaMap within WSL (Windows Subsystem for Linux) is often the most straightforward approach.
-    *   Ensure that the MetaMap binaries (e.g., `metamap`, `skrmedpostctl`, `wsdserverctl`) are executable and in your system's PATH or you know their exact location.
-3.  **Java:** MetaMap requires Java. Ensure a compatible JDK is installed and configured.
+* **Python ≥ 3.8**
+* **Java 8+** (required by MetaMap's `mmserver20`; most systems already have it)
+
+That's it – MetaMap itself is downloaded and compiled for you via `pymm-cli install`.
+
+## Advanced Configuration (optional)
+
+`pymm-cli` reads/writes a JSON config in your home directory. You can tweak settings such as:
+
+* `metamap_processing_options` – command-line flags passed to MetaMap (default covers most use-cases)
+* `max_parallel_workers` – override auto-detected worker count
+* `default_input_dir`, `default_output_dir` – convenience paths pre-filled in menus
+
+Edit via the interactive "Configure Settings" option or manually with a text editor.
 
 ## Setup and Installation
 
@@ -99,24 +106,11 @@ This project is maintained by **Dr. Layth Qassem** and takes inspiration from th
     *   `METAMAP_PROCESSING_OPTIONS`: (Optional) A string of command-line options to pass to the MetaMap binary for each invocation.
         *   Example: `"-y -Z 2020AA --lexicon db --word_sense_disambiguation"`
         *   If not set, the system uses a default set of options defined in `src/pymm/cmdexecutor.py`.
-    *   `MAX_PARALLEL_WORKERS`: (Optional) The number of parallel worker processes to use for processing files. Defaults to `100` in `mimic_controller.py`. Adjust based on your system's CPU cores and memory. A sensible starting point could be the number of CPU cores.
-        *   Example: `export MAX_PARALLEL_WORKERS=8`
-    *   `PYMM_TIMEOUT`: (Optional) Timeout in seconds for each individual MetaMap process execution on a file. Defaults to `120` seconds in `mimic_controller.py`.
+    *   `MAX_PARALLEL_WORKERS`: (Optional) Number of parallel worker processes. Auto-detected from CPU cores if omitted.
+    *   `PYMM_TIMEOUT`: (Optional) Timeout (seconds) for each MetaMap call. Defaults to 120.
 
     **Note on MetaMap Servers (WSD, SKR/MedPost):**
-    The current `pymm` wrapper runs the `METAMAP_BINARY_PATH` executable directly for each file. If the MetaMap options you use (e.g., for word sense disambiguation) require the WSD Server and Tagging Server (SKR/MedPost) to be running, you must start these servers manually *before* running `mimic_controller.py`.
-    Example commands to start these servers (paths may vary):
-    ```bash
-    # In your MetaMap installation directory (e.g., public_mm)
-    ./bin/skrmedpostctl start
-    ./bin/wsdserverctl start
-    ```
-    You would also need to stop them after processing:
-    ```bash
-    ./bin/skrmedpostctl stop
-    ./bin/wsdserverctl stop
-    ```
-    Future versions of this project may include a Python-based utility to manage these servers.
+    If your MetaMap options require support servers you can start/stop them from the **interactive menu → "Manage MetaMap Servers"** – no manual shell commands needed.
 
 ## Usage
 
@@ -188,4 +182,25 @@ For each input `.txt` file, a corresponding `.csv` file will be generated in the
 *   `pymm.py` is the main wrapper class used by the controller.
 *   `mimic_controller.py` orchestrates the batch processing.
 
-This project aims to improve upon existing MetaMap wrappers by providing better orchestration, error handling, and richer data extraction for parallel processing workflows.
+This project aims to improve upon existing MetaMap wrappers by providing better orchestration, error handling, and richer data extraction for parallel processing workflows – **all from a single Python CLI (`pymm-cli`)**.  No external shell scripts are required.
+
+## Quick-Start (One-Liner)
+
+If you are new to MetaMap and just want to get going, run the following from the project root after installing Python dependencies:
+
+```bash
+pymm-cli install && pymm-cli
+```
+
+The `install` sub-command will download and compile MetaMap 2020 under `metamap_install/` and automatically save the discovered binary path to the local configuration file in your home directory.  Once installation finishes, simply run `pymm-cli` to open the **built-in interactive menu** where you can configure defaults, start/stop servers, and kick off batch jobs with a few keystrokes.
+
+## Using a custom download mirror
+
+If you keep the MetaMap archive on your own S3/UploadThing bucket (or any HTTP-reachable location), just expose the URL via an environment variable before running the installer:
+
+```bash
+export METAMAP_MAIN_ARCHIVE_URL="https://wqqatskmc4.ufs.sh/f/<UploadThingKey>"
+pymm-cli install   # will fetch from your mirror instead of GitHub
+```
+
+Leave the variable in your shell profile (e.g., `.bashrc`) to make subsequent `pymm-cli install` calls idempotent and offline-friendly.
