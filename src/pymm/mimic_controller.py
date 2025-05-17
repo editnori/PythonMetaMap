@@ -217,6 +217,9 @@ def configure_all_settings(is_reset=False):
     prompt_and_save_config_value("max_parallel_workers", "Max parallel workers",
                                    explanation=f"Number of files to process simultaneously. Consider your CPU cores.",
                                    code_default=str(MAX_PARALLEL_WORKERS_DEFAULT))
+    prompt_and_save_config_value("pymm_timeout", "Per-file MetaMap timeout (seconds)",
+                                  explanation="How long MetaMap is allowed to run on a single note before being killed.",
+                                  code_default="300")
     print("--- Configuration Complete ---")
 
 # --- PyMetaMap Import (from .pymm import Metamap as PyMetaMap) ---
@@ -581,7 +584,7 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                 # End marker written in finally
                 continue
             
-            pymm_timeout = int(os.getenv("PYMM_TIMEOUT", "120"))
+            pymm_timeout = int(get_config_value("pymm_timeout", os.getenv("PYMM_TIMEOUT", "120")))
             mmos_iter = mm.parse(lines, timeout=pymm_timeout)
             concepts_list = [concept for mmo_item in mmos_iter for concept in mmo_item]
 
