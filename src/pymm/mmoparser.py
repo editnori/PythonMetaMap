@@ -339,5 +339,22 @@ class MMO:
 
 
 def parse(xml_file):
-    document = parse_xml(xml_file).documentElement
-    return MMOS(document.getElementsByTagName("MMO"))
+    try:
+        document = parse_xml(xml_file).documentElement
+        return MMOS(document.getElementsByTagName("MMO"))
+    except Exception as e:
+        # Check if the output file exists and has content
+        try:
+            with open(xml_file, 'r') as f:
+                content = f.read().strip()
+                if not content:
+                    print(f"ERROR: XML file '{xml_file}' is empty")
+                else:
+                    # Log a snippet of the problematic XML for debugging
+                    print(f"ERROR: Failed to parse XML file '{xml_file}': {e}")
+                    print(f"XML snippet (first 200 chars): {content[:200]}")
+        except Exception as file_err:
+            print(f"ERROR: Could not read XML file '{xml_file}': {file_err}")
+        
+        # Return an empty instance instead of raising
+        return MMOS([])

@@ -82,7 +82,14 @@ class Metamap:
 
         try:
             self.metamap_command.execute(timeout=timeout)
-            return parse(self.output_file)
+            try:
+                return parse(self.output_file)
+            except ExpatError as xml_err:
+                # Handle XML parsing errors gracefully
+                print(f"WARNING: XML parsing error in MetaMap output: {xml_err}")
+                print("Returning empty result set instead of crashing")
+                # Return an empty iterator that follows the expected pattern
+                return []
         except TimeoutExpired:
             print ("Execution of command Timedout; try increasing the timeout")
             raise MetamapStuck()

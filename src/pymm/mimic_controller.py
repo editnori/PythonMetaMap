@@ -35,6 +35,7 @@ CONFIG_FILE_NAME = ".pymm_controller_config.json"
 METAMAP_PROCESSING_OPTIONS_DEFAULT = "-y -Z 2020AA --lexicon db" 
 MAX_PARALLEL_WORKERS_DEFAULT = 4
 DEFAULT_PYMM_TIMEOUT = 300  # 5 minutes in seconds
+DEFAULT_JAVA_HEAP_SIZE = "4g"  # Default to 4GB heap
 
 def get_config_path():
     """Gets the path to the configuration file in the user's home directory."""
@@ -221,6 +222,9 @@ def configure_all_settings(is_reset=False):
     prompt_and_save_config_value("pymm_timeout", "Per-file MetaMap timeout (seconds)",
                                   explanation="How long MetaMap is allowed to run on a single note before being killed.",
                                   code_default=str(DEFAULT_PYMM_TIMEOUT))
+    prompt_and_save_config_value("java_heap_size", "Java heap size for MetaMap (e.g., 4g, 16g, 100g)",
+                                 explanation="Maximum memory allocation for MetaMap's Java process. For large notes, increase this value.",
+                                 code_default=DEFAULT_JAVA_HEAP_SIZE)
     print("--- Configuration Complete ---")
 
 # --- PyMetaMap Import (from .pymm import Metamap as PyMetaMap) ---
@@ -748,7 +752,14 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
         # Ensure worker respects specific MetaMap options
         if current_metamap_options:
             os.environ["METAMAP_PROCESSING_OPTIONS"] = current_metamap_options
-        mm = PyMetaMap(current_metamap_binary_path, debug=False) 
+            
+        # Set Java heap size if configured
+        java_heap_size = get_config_value("java_heap_size", os.getenv("JAVA_HEAP_SIZE", DEFAULT_JAVA_HEAP_SIZE))
+        if java_heap_size:
+            os.environ["JAVA_HEAP_SIZE"] = java_heap_size
+            logging.info(f"[{worker_id}] Setting Java heap size to {java_heap_size}")
+            
+        mm = PyMetaMap(current_metamap_binary_path, debug=False)
     except Exception as e:
         logging.error(f"[{worker_id}] Failed to initialize PyMetaMap with binary '{current_metamap_binary_path}': {e}")
         for f_path in files_for_worker: results.append((os.path.basename(f_path), "0ms", True))
@@ -773,6 +784,18 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
             
             pymm_timeout = int(get_config_value("pymm_timeout", os.getenv("PYMM_TIMEOUT", str(DEFAULT_PYMM_TIMEOUT))))
             mmos_iter = mm.parse(lines, timeout=pymm_timeout)
+            
+            # Check if we received an empty result due to XML parsing error
+            if not mmos_iter and hasattr(mmos_iter, '__len__') and len(mmos_iter) == 0:
+                logging.warning(f"[{worker_id}] XML parsing error for {input_file_basename} - returning empty concept list")
+                # Write a valid CSV file anyway with just the headers
+                with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
+                    f_out.write(f"{START_MARKER_PREFIX}{input_file_basename}\n")
+                    writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
+                    writer.writerow(CSV_HEADER)
+                # Continue with the next file - don't treat as error
+                continue
+                
             concepts_list = [concept for mmo_item in mmos_iter for concept in mmo_item]
 
             with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
@@ -1199,6 +1222,7 @@ def handle_run_batch_processing():
     metamap_opts = get_config_value("metamap_processing_options", METAMAP_PROCESSING_OPTIONS_DEFAULT)
     current_max_workers = int(get_config_value("max_parallel_workers", str(MAX_PARALLEL_WORKERS_DEFAULT)))
     timeout_value = int(get_config_value("pymm_timeout", os.getenv("PYMM_TIMEOUT", str(DEFAULT_PYMM_TIMEOUT))))
+    java_heap_size = get_config_value("java_heap_size", os.getenv("JAVA_HEAP_SIZE", DEFAULT_JAVA_HEAP_SIZE))
     # The global MAX_PARALLEL_WORKERS is used by execute_batch_processing, ensure it reflects current config
     global MAX_PARALLEL_WORKERS
     MAX_PARALLEL_WORKERS = current_max_workers
@@ -1206,6 +1230,7 @@ def handle_run_batch_processing():
     print(f"MetaMap Options: '{metamap_opts}'")
     print(f"Max Parallel Workers: {MAX_PARALLEL_WORKERS}")
     print(f"Timeout per file: {timeout_value} seconds")
+    print(f"Java heap size: {java_heap_size}")
 
     # Show nohup command for background processing
     script_name = os.path.basename(sys.argv[0])
