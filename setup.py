@@ -8,12 +8,11 @@ __license__ = "mit"
 import sys
 from setuptools import setup
 
-entry_points = """
-[console_scripts]
-pymm-cli = pymm.cli:main
-=======
-pymm-install = install_metamap:main
-"""
+entry_points = {
+    'console_scripts': [
+        'pymm-cli = pymm.mimic_controller:main',
+    ]
+}
 
 def setup_package():
     needs_sphinx = {'build_sphinx', 'upload_docs'}.intersection(sys.argv)

@@ -4,6 +4,7 @@ from __future__ import division, print_function, absolute_import
 
 from os.path import abspath
 import subprocess
+import os
 
 __author__ = "Srikanth Mujjiga"
 __copyright__ = "Srikanth Mujjiga"
@@ -20,9 +21,29 @@ class MetamapCommand:
             print (self.command)
 
     def _get_command(self):
-        cmd = [self.metamap_path, "-c", "-Q", "4", "-y", "-K", "--sldi", "-I", "--XMLf1", "--negex"]
-        if not self.debug:
+        # Default command options
+        default_options = ["-c", "-Q", "4", "-K", "--sldi", "-I", "--XMLf1", "--negex", "--word_sense_disambiguation"]
+        
+        # Check for environment variable
+        env_options_str = os.getenv("METAMAP_PROCESSING_OPTIONS")
+        
+        current_options = []
+        if env_options_str:
+            # Split the string into a list of options
+            # Handles options like "-y" or "--lexicon db" correctly if they are space-separated
+            current_options = env_options_str.split()
+            if self.debug:
+                print(f"Using METAMAP_PROCESSING_OPTIONS from environment: {current_options}")
+        else:
+            current_options = default_options
+            if self.debug:
+                print(f"Using default MetaMap options: {current_options}")
+
+        cmd = [self.metamap_path] + current_options
+        
+        if not self.debug and "--silent" not in cmd: # Only add --silent if not in debug and not already present
             cmd += ["--silent"]
+        
         cmd += [self.input_file, self.output_file]
         return cmd
 
