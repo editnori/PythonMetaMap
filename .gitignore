@@ -111,3 +111,4 @@ BatchRunner01.class
 
 # VSCode
 .vscode/ .env.local
+.env.local
