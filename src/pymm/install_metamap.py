@@ -260,7 +260,7 @@ def download_and_extract(url, extract_to_dir, is_source=False):
     def _is_within_directory(directory, target):
         abs_directory = os.path.abspath(directory)
         abs_target = os.path.abspath(target)
-        return os.path.commonprefix([abs_directory, abs_target]) == abs_directory
+        return os.path.commonpath([abs_directory]) == os.path.commonpath([abs_directory, abs_target])
 
     try:
         with tarfile.open(tar_path, mode) as tar:
@@ -296,11 +296,10 @@ def extract_with_system_tar(tar_path: str, dest_dir: str, mode: str) -> bool:
         comp_prog = "--use-compress-program=pixz"
 
     os.makedirs(dest_dir, exist_ok=True)
-    # Add 'v' for verbose to see filenames streamed
-    cmd = f"tar {comp_prog} -xvf {shlex.quote(tar_path)} -C {shlex.quote(dest_dir)}"
-    print(f"Using system tar for extraction (streaming output): {cmd}")
-    # Use Popen to stream output in real-time
-    process = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    # Build cmd parts safely without shell=True
+    cmd_parts = ["tar"] + (comp_prog.split() if comp_prog else []) + ["-xvf", tar_path, "-C", dest_dir]
+    print(f"Using system tar for extraction (streaming output): {' '.join(cmd_parts)}")
+    process = subprocess.Popen(cmd_parts, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     if process.stdout:
         for line in iter(process.stdout.readline, ''):
             print(line, end='') # Print each line as it comes

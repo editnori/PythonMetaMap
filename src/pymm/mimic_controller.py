@@ -221,11 +221,13 @@ def configure_all_settings(is_reset=False):
 
 # --- PyMetaMap Import (from .pymm import Metamap as PyMetaMap) ---
 try:
-    from .pymm import Metamap as PyMetaMap 
-except ImportError as e:
-    print(f"ERROR: Critical - Could not import PyMetaMap from .pymm. Error: {e}", file=sys.stderr)
-    print("This script must be run as part of the 'pymm' package via its entry point (pymm-cli).", file=sys.stderr)
-    PyMetaMap = None
+    from . import Metamap as PyMetaMap  # Metamap exposed in package __init__
+except ImportError:
+    try:
+        from pymm import Metamap as PyMetaMap  # absolute fallback
+    except ImportError as e:
+        print(f"ERROR: Could not import Metamap class: {e}", file=sys.stderr)
+        PyMetaMap = None
 
 # --- Global Constants (STATE_FILE, PID_FILE, etc.) ---
 STATE_FILE = ".mimic_state.json"
@@ -787,26 +789,6 @@ def execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_bina
         logging.getLogger().addHandler(fh)
     print(f"Logs will be written to: {log_path}")
 
-    # --- Launch detached background process ---
-    import shlex, sys
-    cmd = [sys.executable, '-m', 'pymm.mimic_controller', 'start', inp_dir_str, out_dir_str]
-    try:
-        if os.name == 'posix':
-            nohup_out = open(os.path.join(out_dir, 'nohup.out'), 'ab')
-            proc = subprocess.Popen(cmd, stdout=nohup_out, stderr=nohup_out, preexec_fn=os.setpgrp)
-        else:  # Windows
-            DETACHED_PROCESS = 0x00000008
-            proc = subprocess.Popen(cmd, creationflags=DETACHED_PROCESS, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        with open(os.path.join(out_dir, PID_FILE), 'w') as fpid:
-            fpid.write(str(proc.pid))
-        print(f"Batch started in background (PID {proc.pid}). You can exit this menu.")
-    except Exception as e_bg:
-        print(f"Failed to launch background process: {e_bg}\nRunning in foreground instead…")
-        execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_binary_path, global_metamap_options)
-
-    # returning immediately (do not block interactive menu)
-    return
-
 def handle_configure_settings_menu(): # Renamed to avoid clash if main() has similar name
     configure_all_settings(is_reset=False)
 
@@ -1005,8 +987,16 @@ def interactive_main_loop():
                 log_fn = get_dynamic_log_filename(log_out_dir)
                 log_fp = os.path.join(log_out_dir, log_fn)
                 if os.path.exists(log_fp):
-                    lines = input("How many lines to tail (default 20)? ").strip() or "20"
-                    subprocess.run(["tail", "-n", lines, log_fp])
+                    lines = input("How many lines to show from end (default 20)? ").strip() or "20"
+                    if shutil.which("tail"):
+                        subprocess.run(["tail", "-n", lines, log_fp])
+                    else:
+                        try:
+                            with open(log_fp, "r", encoding="utf-8", errors="ignore") as _tf:
+                                data_lines = _tf.readlines()[-int(lines):]
+                            print("".join(data_lines))
+                        except Exception as _tf_e:
+                            print(f"Error displaying log tail: {_tf_e}")
                 else:
                     print(f"Log file not found: {log_fp}")
             else:
@@ -1109,7 +1099,16 @@ def main():
     elif subcmd == "tail" and len(sys.argv) in {3,4}:
         out_dir_tail = os.path.abspath(os.path.expanduser(sys.argv[2])); lines_to_tail = sys.argv[3] if len(sys.argv) == 4 else "20"
         log_file_name_tail = get_dynamic_log_filename(out_dir_tail); log_file_path_tail = os.path.join(out_dir_tail, log_file_name_tail)
-        if os.path.exists(log_file_path_tail): subprocess.run(["tail", "-n", lines_to_tail, log_file_path_tail])
+        if os.path.exists(log_file_path_tail):
+            if shutil.which("tail"):
+                subprocess.run(["tail", "-n", lines_to_tail, log_file_path_tail])
+            else:
+                try:
+                    with open(log_file_path_tail, "r", encoding="utf-8", errors="ignore") as _tf:
+                        data_lines = _tf.readlines()[-int(lines_to_tail):]
+                    print("".join(data_lines))
+                except Exception as _tf_e:
+                    print(f"Error displaying log tail: {_tf_e}")
         else: print(f"Log file not found: {log_file_path_tail}"); sys.exit(1)
         sys.exit(0)
     

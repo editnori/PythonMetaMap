@@ -270,13 +270,11 @@ class MMO:
     def __init__(self, mmo):
         self.mmo = mmo
         self.index = 0
-        self.concept = None
 
     def __iter__(self):
         for idx, tag in enumerate(["Candidates", "MappingCandidates"]):
             for candidates in self.mmo.getElementsByTagName(tag):
                 candidates = candidates.getElementsByTagName("Candidate")
-                #print ("Found {0} {1}".format(len(candidates), tag))
                 for concept in candidates:
                     yield Concept.from_xml(concept, is_mapping=idx)
 
