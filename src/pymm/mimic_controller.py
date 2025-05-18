@@ -344,57 +344,15 @@ def start_metamap_servers(public_mm_dir):
     if not (os.path.isfile(skr_ctl) and os.path.isfile(wsd_ctl) and os.path.isfile(mmserver)):
         print("MetaMap server scripts not found in", bin_path)
         return
-    
-    print("Launching MetaMap servers...")
-    
-    # Start Tagger
-    print("Starting SKR/MedPost tagger...")
-    result_skr = subprocess.run([skr_ctl, "start"], capture_output=True, text=True)
-    if result_skr.returncode == 0:
-        print("SKR/MedPost tagger started successfully")
-    else:
-        print(f"Error starting SKR/MedPost tagger: {result_skr.stderr}")
-    time.sleep(2)  # Give it time to start
-
-    # Start WSD
-    print("Starting WSD server...")
-    result_wsd = subprocess.run([wsd_ctl, "start"], capture_output=True, text=True)
-    if result_wsd.returncode == 0:
-        print("WSD server start command issued")
-    else:
-        print(f"Error starting WSD server: {result_wsd.stderr}")
-    
-    # Wait for WSD server to actually start
-    max_attempts = 5
-    for attempt in range(max_attempts):
-        time.sleep(2)  # Give it time to start
-        if is_wsd_server_running():
-            print("WSD server is running on port 5554")
-            break
-        elif attempt < max_attempts - 1:
-            print(f"Waiting for WSD server to start (attempt {attempt+1}/{max_attempts})...")
-        else:
-            print("WARNING: WSD server does not appear to be running after multiple attempts")
-            print("This may cause errors during MetaMap processing")
-    
-    # Start mmserver20
-    print("Starting mmserver20...")
+    print("Launching Tagger, WSD, and mmserver20…")
+    _run_quiet([skr_ctl, "start"])
+    _run_quiet([wsd_ctl, "start"])
+    # Launch mmserver20 in background
     try:
-        # Check if already running
-        existing = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        if existing.returncode != 0:
-            # Start the server in background
-            subprocess.Popen([mmserver], cwd=bin_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            print("mmserver20 launched in background")
-            time.sleep(2)  # Give it time to start
-        else:
-            print("mmserver20 is already running")
+        subprocess.Popen([mmserver])
     except Exception as e:
-        print(f"Error starting mmserver20: {e}")
-    
+        print("Could not start mmserver20:", e)
     print("Start commands issued. Use 'Status' to verify.")
-    # Show status after starting
-    status_metamap_servers(public_mm_dir)
 
 def stop_metamap_servers(public_mm_dir):
     bin_path = os.path.join(public_mm_dir, "bin")
@@ -422,13 +380,6 @@ def status_metamap_servers(public_mm_dir):
     print("--- WSD Server Status ---")
     if os.path.isfile(wsd_ctl):
         subprocess.run([wsd_ctl, "status"], check=False)
-        # Double-check if WSD server is actually accessible via network
-        wsd_running = is_wsd_server_running()
-        if wsd_running:
-            print("WSD server is accessible on port 5554")
-        else:
-            print("WARNING: WSD server process might be running but is not accessible on port 5554")
-            print("This will cause errors in MetaMap processing")
     else:
         print(f"wsdserverctl not found at {wsd_ctl}")
 
@@ -625,39 +576,28 @@ def ensure_servers_running():
     wsd_ctl = os.path.join(bin_path, "wsdserverctl")
     mmserver = os.path.join(bin_path, "mmserver20")
 
-    # Always start servers that are needed rather than just checking
-    print("Starting MetaMap servers...")
-    
     # Tagger
     if os.path.isfile(skr_ctl):
-        print("Starting SKR/MedPost tagger...")
-        subprocess.run([skr_ctl, "start"], cwd=bin_path)
-        time.sleep(2)  # Give it time to start
+        res = subprocess.run([skr_ctl, "status"], capture_output=True, text=True)
+        if "is stopped" in res.stdout.lower() or res.returncode != 0:
+            print("Starting SKR/MedPost tagger…")
+            _run_quiet([skr_ctl, "start"], cwd=bin_path)
 
     # WSD
     if os.path.isfile(wsd_ctl):
-        print("Starting WSD server...")
-        subprocess.run([wsd_ctl, "start"], cwd=bin_path)
-        time.sleep(2)  # Give it time to start
+        res = subprocess.run([wsd_ctl, "status"], capture_output=True, text=True)
+        if "is stopped" in res.stdout.lower() or res.returncode != 0:
+            print("Starting WSD server…")
+            _run_quiet([wsd_ctl, "start"], cwd=bin_path)
 
     # mmserver20 (fire-and-forget)
-    if os.path.isfile(mmserver):
-        print("Launching mmserver20 in background...")
-        try:
-            # Check if mmserver is already running
-            existing = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            if existing.returncode != 0:
-                # Start the server in background
-                subprocess.Popen([mmserver], cwd=bin_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                time.sleep(2)  # Give it time to start
-            else:
-                print("mmserver20 already running")
-        except Exception as e:
-            print(f"Error starting mmserver20: {e}")
-    
-    # Verify all servers are running
-    print("Verifying server status...")
-    status_metamap_servers(public_mm_dir)
+    try:
+        existing = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if existing.returncode != 0 and os.path.isfile(mmserver):
+            print("Launching mmserver20 in background…")
+            subprocess.Popen([mmserver], cwd=bin_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 # --- Helper Functions (rglob_compat, load_state, etc.) ---
 def rglob_compat(directory, pattern):
@@ -684,73 +624,27 @@ def save_state(out_dir, state):
 def gather_inputs(inp_dir): 
     return sorted([p for p in rglob_compat(inp_dir, "*.txt")])
 
-def check_output_file_completion(output_csv_path, input_file_original_stem_for_marker, state=None):
-    """Check an output CSV file to determine if it has proper start and end markers.
-    
-    Parameters
-    ----------
-    output_csv_path : str
-        Path to the output CSV file to check.
-    input_file_original_stem_for_marker : str
-        The original input filename used to construct expected markers.
-    state : dict, optional
-        Current state dictionary for tracking retries.
-        
-    Returns
-    -------
-    bool
-        True if the file appears to be complete, False otherwise.
-    """
-    if not os.path.exists(output_csv_path):
+def check_output_file_completion(output_csv_path, input_file_original_stem_for_marker):
+    """Checks if an output CSV is fully processed based on start/end markers."""
+    if not os.path.exists(output_csv_path) or os.stat(output_csv_path).st_size == 0:
         return False
+
     try:
-        # Find the first line containing the start marker and the last line containing the end marker
-        first_line_str = ""; last_line_str = ""
-        
-        try:
-            with open(output_csv_path, 'rb') as fh:
-                # Read first line
-                first_line_bytes = fh.readline()
-                if first_line_bytes:
-                    first_line_str = first_line_bytes.decode('utf-8', 'replace').strip()
-                
-                # Read a buffer from the end for last line (avoiding reading entire file)
-                lines_in_buffer = []
-                chunk_size = 4096  # 4 KB
-                fh.seek(0, os.SEEK_END)
-                filesize = fh.tell()
-                
-                if filesize > chunk_size:
-                    fh.seek(max(0, filesize - chunk_size))
-                    # Read to discard partial line if not at start of file
-                    if filesize > chunk_size: 
-                        fh.readline()
-                    # Now read complete lines
-                    lines_in_buffer = fh.readlines()
-                else:
-                    # Small file - read it all
-                    fh.seek(0)
-                    lines_in_buffer = fh.readlines()
-                
-                if lines_in_buffer:
-                    last_line_str = lines_in_buffer[-1].decode('utf-8', 'replace').strip()
-                elif first_line_str:
-                    logging.warning("Could not determine last line via buffer (binary mode) for {path}. First line was: '{fl}'".format(path=output_csv_path, fl=first_line_str))
-        except Exception as e:
-            logging.warning(f"Error reading file {output_csv_path} in binary mode: {e}")
-            
-        if not last_line_str:
-            try:
-                with open(output_csv_path, 'rb') as fh_tail:
-                    fh_tail.seek(0, os.SEEK_END)
-                    size = fh_tail.tell()
-                    fh_tail.seek(max(size - 65536, 0))  # 64 KB
-                    tail_bytes = fh_tail.read()
-                    if tail_bytes:
-                        last_line_str = tail_bytes.decode('utf-8', 'replace').strip().splitlines()[-1]
-            except Exception:
-                # Any issue here simply means we fall back to marker mismatch logic
-                pass
+        first_line_str = ""
+        last_line_str = ""
+        # It's crucial to handle potential decoding errors gracefully if files aren't UTF-8
+        with open(output_csv_path, 'r', encoding='utf-8', errors='replace') as f_text:
+            first_line_str = f_text.readline().strip()
+            # Read all lines to get the last one; less efficient but robust for text files
+            all_lines = f_text.readlines() 
+            if all_lines:
+                last_line_str = all_lines[-1].strip()
+            elif first_line_str: # File has only one line
+                last_line_str = first_line_str
+            else: # File is effectively empty after first readline (e.g. only whitespace)
+                logging.warning("File empty or only whitespace after first line read: {path}".format(path=output_csv_path))
+                return False
+
 
         # Markers in the file content should refer to the original .txt filename for consistency with BatchRunner01's potential logging
         expected_start_marker = "{prefix}{stem}".format(prefix=START_MARKER_PREFIX, stem=input_file_original_stem_for_marker)
@@ -758,52 +652,20 @@ def check_output_file_completion(output_csv_path, input_file_original_stem_for_m
         expected_end_marker_error = expected_end_marker + ":ERROR"
         
         # Early exit: if the last line is still the CSV header, the file is in progress – do not log a mismatch.
-        # CSV_HEADER_PREFIX is a string. last_line_str could be the actual header array if not joined.
-        # Ensure CSV_HEADER is a string for startswith if last_line_str is also a string.
-        header_regex = r'^"?' + r'"?,"?'.join(re.escape(h) for h in CSV_HEADER) + r'"?$'
-        if re.match(header_regex, last_line_str):
-            return False
-
-        # For the first line, it should *be* the start marker, not just start with it, after stripping.
-        # The issue in the log: Found: 'META_BATCH_START_NOTE_ID:K_0001_1549757_7224370079797268830.txt\n"CUI",...'
-        # This implies first_line_str after .strip() was not just the marker. 
-        # This can happen if readline() read more than one \n due to file encoding/line ending issues, 
-        # or if the file literally had the header on the same line as the marker (unlikely).
-        # Let's assume first_line_str, after decode & strip, IS the first logical line.
+        header_regex = r'^"?' + r'"?,"?'.join(re.escape(h) for h in CSV_HEADER) + r'"?$' # Regex to match header with optional quotes
+        if re.match(header_regex, last_line_str): # Check if last_line_str matches CSV header
+            return False # Still processing
 
         start_marker_found = (first_line_str == expected_start_marker)
         end_marker_found = (last_line_str == expected_end_marker or last_line_str == expected_end_marker_error)
 
         if start_marker_found and end_marker_found:
             if last_line_str == expected_end_marker_error:
-                logging.warning("File processed with error marker: {path}".format(path=output_csv_path))
-                
-                # Handle retry logic if state is provided
-                if state is not None:
-                    # Get or initialize retry count
-                    retry_key = f"retry_{input_file_original_stem_for_marker}"
-                    retry_count = state.get(retry_key, 0) + 1
-                    state[retry_key] = retry_count
-                    
-                    # If we've reached max retries, move to failed_files directory
-                    if retry_count >= 3:
-                        out_dir = os.path.dirname(output_csv_path)
-                        failed_dir = os.path.join(out_dir, "failed_files")
-                        os.makedirs(failed_dir, exist_ok=True)
-                        
-                        failed_path = os.path.join(failed_dir, os.path.basename(output_csv_path))
-                        try:
-                            shutil.copy2(output_csv_path, failed_path)
-                            os.remove(output_csv_path)  # Remove the original after successful copy
-                            logging.error(f"File {input_file_original_stem_for_marker} failed after 3 retries, moved to failed_files directory")
-                            return False
-                        except Exception as e:
-                            logging.error(f"Error moving file to failed directory: {e}")
-                
-                # Treat files ending with ERROR marker as INCOMPLETE so they will be retried.
-                return False
+                 logging.warning("File processed with error marker: {path}".format(path=output_csv_path))
+                 # Treat files ending with ERROR marker as INCOMPLETE so they will be retried by main logic if applicable
+                 return False # This function only checks for presence of markers; retry is handled elsewhere
             return True
-        else:
+        else: # Log detailed marker mismatch info
             logging.info(
                 "Marker mismatch for {path}. Expected Start: '{exp_start}' (based on original stem '{marker_stem}'), Found: '{f_start}'. Expected End: '{exp_end}' or '{exp_end_err}', Found: '{f_end}'.".format(
                     path=output_csv_path, 
@@ -814,12 +676,11 @@ def check_output_file_completion(output_csv_path, input_file_original_stem_for_m
                     exp_end_err=expected_end_marker_error,
                     f_end=last_line_str
                 )
-            )
-        return False
-    except Exception as e:
-        # Log the full traceback for unexpected errors during file check
+            ) # Mismatch, so not complete
+            return False
+    except Exception as e: # Catch any other errors during file check (IO, permissions, etc.)
         logging.exception("Unhandled error during check_output_file_completion for {path}: {error}".format(path=output_csv_path, error=e))
-        return False
+        return False # Default to not complete on any error
     return False # Should be unreachable if logic above is complete
 
 def get_dynamic_log_filename(base_output_dir):
@@ -1353,14 +1214,15 @@ def execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_bina
     for input_file_str_path in all_input_files_orig_str:
         input_file_basename = os.path.basename(input_file_str_path)
         output_csv_path_str = derive_output_csv_path(out_dir, input_file_basename)
-        if check_output_file_completion(output_csv_path_str, input_file_basename, state):
+        # Pass state to check_output_file_completion for retry logic
+        if check_output_file_completion(output_csv_path_str, input_file_basename): # OLD version does not take state
             completed_files_count_initial += 1
         else:
             if os.path.exists(output_csv_path_str):
                 # Move to error folder if it's an existing but incomplete file
-                failed_dir = os.path.join(out_dir, ERROR_FOLDER)
-                Path(failed_dir).mkdir(parents=True, exist_ok=True)
-                dest_failed = os.path.join(failed_dir, os.path.basename(output_csv_path_str))
+                error_folder_path = os.path.join(out_dir, ERROR_FOLDER) # Use constant
+                Path(error_folder_path).mkdir(parents=True, exist_ok=True)
+                dest_failed = os.path.join(error_folder_path, os.path.basename(output_csv_path_str))
                 try: shutil.move(output_csv_path_str, dest_failed); logging.info(f"Moved incomplete CSV {output_csv_path_str} to {dest_failed}")
                 except Exception as mv_ex: logging.warning(f"Could not move incomplete CSV {output_csv_path_str}: {mv_ex}")
             files_to_process_paths.append(input_file_str_path)
@@ -1545,19 +1407,8 @@ def handle_run_batch_processing():
             except OSError:
                 print("Background execution not supported on this platform")
                 # Continue with normal execution
-
-        # Always force-start MetaMap servers before batch processing
-        print("Ensuring MetaMap servers are running (required for batch processing)...")
-        metamap_binary_p = get_config_value("metamap_binary_path")
-        if metamap_binary_p:
-            public_mm_dir = os.path.abspath(os.path.join(os.path.dirname(metamap_binary_p), os.pardir))
-            if os.path.isdir(public_mm_dir):
-                start_metamap_servers(public_mm_dir)
-            else:
-                print("Warning: Could not determine public_mm directory from binary path")
-                ensure_servers_running()
-        else:
-            ensure_servers_running()
+        
+        ensure_servers_running() # Reverted to old ensure_servers_running
 
     mode = "start" 
     if os.listdir(out_dir) and any(f.endswith('.csv') or f == STATE_FILE for f in os.listdir(out_dir)):
@@ -3089,17 +2940,8 @@ def main():
         inp_dir_str, out_dir_str = sys.argv[2:4]
                 
         # Always force-start MetaMap servers before batch processing
-        print("Ensuring MetaMap servers are running (required for batch processing)...")
-        metamap_binary_p = get_config_value("metamap_binary_path")
-        if metamap_binary_p:
-            public_mm_dir = os.path.abspath(os.path.join(os.path.dirname(metamap_binary_p), os.pardir))
-            if os.path.isdir(public_mm_dir):
-                start_metamap_servers(public_mm_dir)
-            else:
-                print("Warning: Could not determine public_mm directory from binary path")
-                ensure_servers_running()
-        else:
-            ensure_servers_running()
+        # This call now uses the reverted ensure_servers_running
+        ensure_servers_running()
                     
         current_metamap_options = get_config_value("metamap_processing_options", default_metamap_options)
         execute_batch_processing(inp_dir_str, out_dir_str, subcmd, configured_metamap_binary_path, current_metamap_options)
