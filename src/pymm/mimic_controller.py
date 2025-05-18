@@ -514,14 +514,50 @@ def _is_server_process_running(command_path, server_name_in_output):
         return False # Assume not running on error
 
 def ensure_servers_running():
-    """Start Tagger, WSD, and mmserver20 if they are not running.
+    """Ensure SKR tagger, WSD server and mmserver20 are running.
 
-    NOTE: Disabled in lightweight configuration – function will exit immediately so that
-    MetaMap runs without attempting to launch or manage additional servers.
+    If they are not running, try to start them.  Works only on Unix-like
+    systems where the standard MetaMap control scripts are available.
     """
-    print("Info: ensure_servers_running() disabled – skipping MetaMap server startup.")
-    return  # <-- Early return prevents any server-management logic below
-    # The original implementation is retained below for reference but will never execute.
+
+    public_mm_dir = None
+    binary_path = get_config_value("metamap_binary_path") or os.getenv("METAMAP_BINARY_PATH")
+    if binary_path:
+        public_mm_dir = os.path.abspath(os.path.join(os.path.dirname(binary_path), os.pardir))
+        if not os.path.isdir(public_mm_dir):
+            public_mm_dir = None
+
+    if not public_mm_dir:
+        print("ensure_servers_running: cannot locate public_mm directory – skipping server check.")
+        return
+
+    bin_path = os.path.join(public_mm_dir, "bin")
+    skr_ctl = os.path.join(bin_path, "skrmedpostctl")
+    wsd_ctl = os.path.join(bin_path, "wsdserverctl")
+    mmserver = os.path.join(bin_path, "mmserver20")
+
+    # Tagger
+    if os.path.isfile(skr_ctl):
+        res = subprocess.run([skr_ctl, "status"], capture_output=True, text=True)
+        if "is stopped" in res.stdout.lower() or res.returncode != 0:
+            print("Starting SKR/MedPost tagger…")
+            _run_quiet([skr_ctl, "start"], cwd=bin_path)
+
+    # WSD
+    if os.path.isfile(wsd_ctl):
+        res = subprocess.run([wsd_ctl, "status"], capture_output=True, text=True)
+        if "is stopped" in res.stdout.lower() or res.returncode != 0:
+            print("Starting WSD server…")
+            _run_quiet([wsd_ctl, "start"], cwd=bin_path)
+
+    # mmserver20 (fire-and-forget)
+    try:
+        existing = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if existing.returncode != 0 and os.path.isfile(mmserver):
+            print("Launching mmserver20 in background…")
+            subprocess.Popen([mmserver], cwd=bin_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
 
 # --- Helper Functions (rglob_compat, load_state, etc.) ---
 def rglob_compat(directory, pattern):
@@ -759,7 +795,7 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
             os.environ["JAVA_HEAP_SIZE"] = java_heap_size
             logging.info(f"[{worker_id}] Setting Java heap size to {java_heap_size}")
             
-        mm = PyMetaMap(current_metamap_binary_path, debug=False)
+        mm = PyMetaMap(current_metamap_binary_path, debug=True)
     except Exception as e:
         logging.error(f"[{worker_id}] Failed to initialize PyMetaMap with binary '{current_metamap_binary_path}': {e}")
         for f_path in files_for_worker: results.append((os.path.basename(f_path), "0ms", True))
@@ -1242,21 +1278,36 @@ def handle_run_batch_processing():
         print(f"  tail -f {out_dir}/pymm_run.log")
         print(f"  tail -f {out_dir}/{get_dynamic_log_filename(out_dir)}")
         
-        run_bg = input("\nRun in background now? (yes/no, default: no): ").strip().lower() == 'yes'
+        # Always run in background mode - no longer asking the user
+        run_bg = True
         if run_bg:
             try:
                 pid = os.fork()
                 if pid > 0:
                     # Parent process
                     print(f"Started background process with PID {pid}")
+                    # Write PID to file for easier management
+                    pid_path = os.path.join(out_dir, PID_FILE)
+                    try:
+                        with open(pid_path, 'w') as f:
+                            f.write(str(pid))
+                        print(f"PID saved to {pid_path}")
+                    except Exception as e:
+                        print(f"Note: Could not save PID to file: {e}")
                     sys.exit(0)
                 # Child process continues
+                # Redirect stdout and stderr to log file
+                sys.stdout.flush()
+                sys.stderr.flush()
+                log_file = open(os.path.join(out_dir, "pymm_run.log"), "a")
+                os.dup2(log_file.fileno(), sys.stdout.fileno())
+                os.dup2(log_file.fileno(), sys.stderr.fileno())
             except OSError:
                 print("Background execution not supported on this platform")
                 # Continue with normal execution
 
-    # Auto-start MetaMap servers if needed (disabled)
-    # ensure_servers_running()
+    # Auto-start MetaMap servers if needed
+    ensure_servers_running()
 
     mode = "start" 
     if os.listdir(out_dir) and any(f.endswith('.csv') or f == STATE_FILE for f in os.listdir(out_dir)):
@@ -1618,8 +1669,8 @@ def main():
     if subcmd in {"start", "resume"}:
         if len(sys.argv) != 4: logging.error(f"Error: {subcmd} command requires INPUT_DIR and OUTPUT_DIR arguments."); print(f"Usage: pymm-cli {subcmd} INPUT_DIR OUTPUT_DIR"); sys.exit(1)
         inp_dir_str, out_dir_str = sys.argv[2:4]
-        # Auto-start MetaMap servers if needed (disabled)
-        # ensure_servers_running()
+        # Auto-start MetaMap servers if needed
+        ensure_servers_running()
         current_metamap_options = get_config_value("metamap_processing_options", default_metamap_options)
         execute_batch_processing(inp_dir_str, out_dir_str, subcmd, configured_metamap_binary_path, current_metamap_options)
     

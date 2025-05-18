@@ -56,6 +56,7 @@ class MetamapCommand:
             "-K",                      # ignore stop words
             "--sldi",                  # strict limit derivational variants
             "-I",                      # show candidate identifiers
+            "--XMLf1",                 # compact XML format (faster to parse)
             "--negex",                 # attach negation features
             "--word_sense_disambiguation",  # WSD on – improves precision
         ]
@@ -79,7 +80,7 @@ class MetamapCommand:
                 print(f"Using default MetaMap options: {current_options}")
 
         # Guarantee that an XML output format is requested – the downstream
-        # parser requires valid XML.  Users may supply their own option list
+        # parser requires valid XML. Users may supply their own option list
         # via *METAMAP_PROCESSING_OPTIONS*; append a safe default if none of
         # the --XML* flags are present.
         if not any(opt.startswith("--XML") for opt in current_options):
