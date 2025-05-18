@@ -343,16 +343,109 @@ def start_metamap_servers(public_mm_dir):
     mmserver = os.path.join(bin_path, "mmserver20")
     if not (os.path.isfile(skr_ctl) and os.path.isfile(wsd_ctl) and os.path.isfile(mmserver)):
         print("MetaMap server scripts not found in", bin_path)
-        return
-    print("Launching Tagger, WSD, and mmserver20…")
-    _run_quiet([skr_ctl, "start"])
-    _run_quiet([wsd_ctl, "start"])
-    # Launch mmserver20 in background
+        logging.error(f"MetaMap server scripts not found in {bin_path}")
+        return False # Indicate failure
+    
+    print("Launching MetaMap servers...")
+    logging.info("Attempting to launch MetaMap servers...")
+    
+    # Start Tagger
+    print("Starting SKR/MedPost tagger...")
+    logging.info("Starting SKR/MedPost tagger...")
     try:
-        subprocess.Popen([mmserver])
+        result_skr = subprocess.run([skr_ctl, "start"], capture_output=True, text=True, cwd=bin_path, timeout=30)
+        logging.info(f"SKR/MedPost Tagger start command stdout: {result_skr.stdout}")
+        if result_skr.returncode == 0:
+            print("SKR/MedPost tagger start command issued successfully.")
+            logging.info("SKR/MedPost tagger start command issued successfully.")
+        else:
+            print(f"Error issuing SKR/MedPost tagger start command. Return code: {result_skr.returncode}")
+            print(f"Stderr: {result_skr.stderr}")
+            logging.error(f"Error issuing SKR/MedPost tagger start command. Return code: {result_skr.returncode}. Stderr: {result_skr.stderr}")
+    except subprocess.TimeoutExpired:
+        print("Timeout starting SKR/MedPost tagger.")
+        logging.error("Timeout starting SKR/MedPost tagger.")
     except Exception as e:
-        print("Could not start mmserver20:", e)
-    print("Start commands issued. Use 'Status' to verify.")
+        print(f"Exception starting SKR/MedPost tagger: {e}")
+        logging.error(f"Exception starting SKR/MedPost tagger: {e}")
+    time.sleep(3)
+
+    # Start WSD
+    print("Starting WSD server...")
+    logging.info("Starting WSD server...")
+    try:
+        result_wsd = subprocess.run([wsd_ctl, "start"], capture_output=True, text=True, cwd=bin_path, timeout=30)
+        logging.info(f"WSD server start command stdout: {result_wsd.stdout}")
+        if result_wsd.returncode == 0:
+            print("WSD server start command issued successfully.")
+            logging.info("WSD server start command issued successfully.")
+        else:
+            print(f"Error issuing WSD server start command. Return code: {result_wsd.returncode}")
+            print(f"Stderr: {result_wsd.stderr}")
+            logging.error(f"Error issuing WSD server start command. Return code: {result_wsd.returncode}. Stderr: {result_wsd.stderr}")
+    except subprocess.TimeoutExpired:
+        print("Timeout starting WSD server.")
+        logging.error("Timeout starting WSD server.")
+    except Exception as e:
+        print(f"Exception starting WSD server: {e}")
+        logging.error(f"Exception starting WSD server: {e}")
+    
+    # Wait for WSD server to actually start by trying to connect
+    max_attempts = 5
+    wsd_actually_running = False
+    for attempt in range(max_attempts):
+        time.sleep(3) 
+        if is_wsd_server_running(): # This uses the socket check from your newer code
+            print("WSD server is running and accessible on port 5554.")
+            logging.info("WSD server is running and accessible on port 5554.")
+            wsd_actually_running = True
+            break
+        elif attempt < max_attempts - 1:
+            print(f"Waiting for WSD server to become accessible (attempt {attempt+1}/{max_attempts})...")
+            logging.info(f"Waiting for WSD server to become accessible (attempt {attempt+1}/{max_attempts})...")
+        else:
+            print("WARNING: WSD server does not appear to be accessible on port 5554 after multiple attempts.")
+            logging.warning("WSD server does not appear to be accessible on port 5554 after multiple attempts. This may cause errors during MetaMap processing.")
+            
+    # Start mmserver20
+    print("Starting mmserver20...")
+    logging.info("Starting mmserver20...")
+    try:
+        # Check if already running using pgrep
+        pgrep_proc = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if pgrep_proc.returncode != 0: # Not running
+            # Start the server in background. Ensure it's run from its bin directory.
+            # Capture output to log files for mmserver20 specifically.
+            mmserver_log_path = os.path.join(os.path.dirname(public_mm_dir), "mmserver20_startup.log") # Log in parent of public_mm
+            with open(mmserver_log_path, "ab") as outfile: # Append binary mode
+                 subprocess.Popen([mmserver], cwd=bin_path, stdout=outfile, stderr=outfile)
+            print(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+            logging.info(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+            time.sleep(2) 
+        else:
+            print("mmserver20 appears to be already running (pid found by pgrep).")
+            logging.info("mmserver20 appears to be already running (pid found by pgrep).")
+    except FileNotFoundError: # pgrep might not be available
+        print("pgrep not found. Attempting to start mmserver20 directly if not running (status less certain).")
+        logging.warning("pgrep not found. Attempting to start mmserver20 directly.")
+        try:
+            mmserver_log_path = os.path.join(os.path.dirname(public_mm_dir), "mmserver20_startup.log")
+            with open(mmserver_log_path, "ab") as outfile:
+                subprocess.Popen([mmserver], cwd=bin_path, stdout=outfile, stderr=outfile)
+            print(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+            logging.info(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+            time.sleep(2)
+        except Exception as e_mmserver:
+            print(f"Error attempting to start mmserver20 directly: {e_mmserver}")
+            logging.error(f"Error attempting to start mmserver20 directly: {e_mmserver}")
+    except Exception as e_pgrep:
+        print(f"Error during mmserver20 pgrep check or startup: {e_pgrep}")
+        logging.error(f"Error during mmserver20 pgrep check or startup: {e_pgrep}")
+
+    print("Start commands issued for all servers. Detailed status check follows.")
+    logging.info("Start commands issued for all servers. Detailed status check follows.")
+    status_metamap_servers(public_mm_dir) # Call status to verify
+    return True # Indicate success/attempt
 
 def stop_metamap_servers(public_mm_dir):
     bin_path = os.path.join(public_mm_dir, "bin")
@@ -561,43 +654,55 @@ def ensure_servers_running():
     """
 
     public_mm_dir = None
-    binary_path = get_config_value("metamap_binary_path") or os.getenv("METAMAP_BINARY_PATH")
-    if binary_path:
-        public_mm_dir = os.path.abspath(os.path.join(os.path.dirname(binary_path), os.pardir))
-        if not os.path.isdir(public_mm_dir):
-            public_mm_dir = None
+    # Try to get metamap_binary_path from config or environment
+    binary_path_from_config = get_config_value("metamap_binary_path")
+    binary_path_from_env = os.getenv("METAMAP_BINARY_PATH")
+    
+    # Prioritize config, then environment
+    binary_path = binary_path_from_config or binary_path_from_env
 
+    if binary_path:
+        # Check if the path is plausible before trying to derive public_mm_dir
+        if os.path.isfile(binary_path):
+            # Assuming binary is in public_mm/bin/metamap
+            # Path.resolve().parent.parent should give public_mm
+            try:
+                public_mm_candidate = str(Path(binary_path).resolve().parent.parent)
+                if os.path.isdir(public_mm_candidate) and "public_mm" in public_mm_candidate.lower() : # Heuristic check
+                    public_mm_dir = public_mm_candidate
+                else: # Fallback if heuristic fails, try another common pattern
+                    public_mm_dir_alt = os.path.abspath(os.path.join(os.path.dirname(binary_path), os.pardir))
+                    if os.path.isdir(public_mm_dir_alt) and "public_mm" in public_mm_dir_alt.lower():
+                         public_mm_dir = public_mm_dir_alt
+            except Exception as e:
+                logging.warning(f"Error deriving public_mm_dir from binary path '{binary_path}': {e}")
+                public_mm_dir = None
+        else:
+            logging.warning(f"Configured/Env METAMAP_BINARY_PATH '{binary_path}' is not a file.")
+            public_mm_dir = None
+    
+    # If public_mm_dir still not found, try the 'metamap_install' directory as a last resort
     if not public_mm_dir:
-        print("ensure_servers_running: cannot locate public_mm directory – skipping server check.")
+        meta_install_dir_abs = os.path.abspath("metamap_install")
+        if os.path.isdir(os.path.join(meta_install_dir_abs, "public_mm")):
+             public_mm_dir = os.path.join(meta_install_dir_abs, "public_mm")
+             logging.info(f"Using 'metamap_install/public_mm' as public_mm_dir: {public_mm_dir}")
+        elif os.path.isdir(meta_install_dir_abs) and "public_mm" in os.listdir(meta_install_dir_abs): # Check if metamap_install *is* public_mm
+             # This case is less common but possible if metamap_install is a symlink or points directly to public_mm
+             public_mm_dir = meta_install_dir_abs
+             logging.info(f"Using 'metamap_install' (as public_mm) as public_mm_dir: {public_mm_dir}")
+
+
+    if not public_mm_dir or not os.path.isdir(public_mm_dir):
+        print("ensure_servers_running: Critical: Could not locate a valid public_mm directory. Skipping server check/start.")
+        logging.error("ensure_servers_running: Critical: Could not locate a valid public_mm directory. Skipping server check/start.")
         return
 
-    bin_path = os.path.join(public_mm_dir, "bin")
-    skr_ctl = os.path.join(bin_path, "skrmedpostctl")
-    wsd_ctl = os.path.join(bin_path, "wsdserverctl")
-    mmserver = os.path.join(bin_path, "mmserver20")
-
-    # Tagger
-    if os.path.isfile(skr_ctl):
-        res = subprocess.run([skr_ctl, "status"], capture_output=True, text=True)
-        if "is stopped" in res.stdout.lower() or res.returncode != 0:
-            print("Starting SKR/MedPost tagger…")
-            _run_quiet([skr_ctl, "start"], cwd=bin_path)
-
-    # WSD
-    if os.path.isfile(wsd_ctl):
-        res = subprocess.run([wsd_ctl, "status"], capture_output=True, text=True)
-        if "is stopped" in res.stdout.lower() or res.returncode != 0:
-            print("Starting WSD server…")
-            _run_quiet([wsd_ctl, "start"], cwd=bin_path)
-
-    # mmserver20 (fire-and-forget)
-    try:
-        existing = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        if existing.returncode != 0 and os.path.isfile(mmserver):
-            print("Launching mmserver20 in background…")
-            subprocess.Popen([mmserver], cwd=bin_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+    print(f"Ensuring MetaMap servers are running using public_mm_dir: {public_mm_dir}")
+    logging.info(f"Ensuring MetaMap servers are running using public_mm_dir: {public_mm_dir}")
+    
+    # Now call the verbose start_metamap_servers function
+    start_metamap_servers(public_mm_dir)
 
 # --- Helper Functions (rglob_compat, load_state, etc.) ---
 def rglob_compat(directory, pattern):
