@@ -1669,23 +1669,55 @@ def handle_monitor_dashboard():
     mem_history = {}
     progress_history = []
     
+    # Add mode tracking
+    view_mode = "summary"  # Options: "summary", "workers", "files", "stats"
+    auto_refresh = True
+    refresh_interval = 2  # Update every 2 seconds
+    
+    # Check for msvcrt for Windows key capture
+    has_msvcrt = False
+    try:
+        import msvcrt
+        has_msvcrt = True
+    except ImportError:
+        pass
+    
+    # Check for Unix select for non-blocking input
+    has_select = False
+    try:
+        import select
+        has_select = True
+    except ImportError:
+        pass
+    
     try:
         last_update_time = time.time()
-        update_interval = 2  # Update every 2 seconds
         
         while True:
-            current_time = time.time()
-            if current_time - last_update_time < update_interval:
-                time.sleep(0.1)  # Small sleep to prevent CPU spinning
-                continue
+            if auto_refresh:
+                current_time = time.time()
+                if current_time - last_update_time < refresh_interval:
+                    time.sleep(0.1)  # Small sleep to prevent CPU spinning
+                    
+                    # Check for key presses while waiting
+                    if has_msvcrt and msvcrt.kbhit():
+                        key = msvcrt.getch().decode('utf-8', errors='ignore').lower()
+                        if key == 'q':
+                            break
+                        elif key == 'p':
+                            auto_refresh = False
+                            continue
+                        elif key in ['s', 'w', 'f', 't']:
+                            view_mode = {"s": "summary", "w": "workers", "f": "files", "t": "stats"}[key]
+                        elif key == '+':
+                            refresh_interval = max(0.5, refresh_interval - 0.5)
+                        elif key == '-':
+                            refresh_interval = min(10, refresh_interval + 0.5)
+                    
+                    continue
                 
-            last_update_time = current_time
-            os.system('cls' if os.name == 'nt' else 'clear')
-            
-            print("=" * term_width)
-            print(f"MetaMap Batch Dashboard - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Press Ctrl+C to exit")
-            print("=" * term_width)
-            print(f"Output dir : {out_dir}")
+                last_update_time = current_time
+                os.system('cls' if os.name == 'nt' else 'clear')
             
             # Load the current state
             try:
@@ -1695,68 +1727,12 @@ def handle_monitor_dashboard():
                 print(f"Error reading state file: {e}")
                 state = {}
             
-            # Process statistics
-            if pid:
-                print(f"Main PID   : {pid}")
-                if psutil and psutil.pid_exists(pid):
-                    try:
-                        p = psutil.Process(pid)
-                        main_cpu = p.cpu_percent(interval=0.1)
-                        main_mem = p.memory_info().rss / (1024*1024)
-                        
-                        # Store historical data
-                        if pid not in cpu_history:
-                            cpu_history[pid] = []
-                        if pid not in mem_history:
-                            mem_history[pid] = []
-                            
-                        cpu_history[pid].append(main_cpu)
-                        mem_history[pid].append(main_mem)
-                        
-                        # Keep only last 10 readings
-                        cpu_history[pid] = cpu_history[pid][-10:]
-                        mem_history[pid] = mem_history[pid][-10:]
-                        
-                        # Calculate trend
-                        cpu_trend = "↑" if len(cpu_history[pid]) > 1 and cpu_history[pid][-1] > cpu_history[pid][-2] else "↓"
-                        mem_trend = "↑" if len(mem_history[pid]) > 1 and mem_history[pid][-1] > mem_history[pid][-2] else "↓"
-                        
-                        print(f"CPU        : {main_cpu:.1f}% {cpu_trend}  |  RAM: {main_mem:.1f} MB {mem_trend}")
-                        
-                        # Get child processes
-                        children = p.children(recursive=True)
-                        if children:
-                            print("\nWorker Processes:")
-                            print(f"{'PID':<8} {'CPU%':<8} {'RAM(MB)':<10} {'Status':<10}")
-                            print("-" * 40)
-                            for child in children:
-                                try:
-                                    child_cpu = child.cpu_percent(interval=0.1)
-                                    child_mem = child.memory_info().rss / (1024*1024)
-                                    child_status = child.status()
-                                    
-                                    # Color coding based on CPU usage
-                                    cpu_color = ""
-                                    if child_cpu > 80:
-                                        cpu_str = f"{child_cpu:.1f}% !!"
-                                    elif child_cpu > 50:
-                                        cpu_str = f"{child_cpu:.1f}% !"
-                                    else:
-                                        cpu_str = f"{child_cpu:.1f}%"
-                                        
-                                    print(f"{child.pid:<8} {cpu_str:<8} {child_mem:.1f}MB     {child_status:<10}")
-                                except psutil.NoSuchProcess:
-                                    continue
-                    except Exception as proc_err:
-                        print(f"Error getting process info: {proc_err}")
-                else:
-                    print("Process not running.")
-            
-            # Batch progress
+            # Basic stats calculation (needed for any view)
             total = state.get('total_overall', 0)
             done = state.get('completed_overall_markers', 0)
-            failed_count = len(state.get('file_timings', {}).get('failed_files', []))
-            retry_count = sum(1 for k, v in state.items() if k.startswith('retry_'))
+            failed_count = len(state.get('file_timings', {}).get('failed_files', [])) if state.get('file_timings') else 0
+            retry_count = sum(1 for k in state.keys() if k.startswith('retry_'))
+            pct = done/total*100 if total else 0
             
             # Determine batch status
             active_workers = state.get('active_workers_info', {})
@@ -1767,42 +1743,366 @@ def handle_monitor_dashboard():
             else:
                 batch_status = "UNKNOWN"
             
-            pct = done/total*100 if total else 0
-            
             # Store progress for history
             progress_history.append(pct)
             progress_history = progress_history[-30:]  # Keep last 30 readings
             
-            # Calculate progress rate
-            progress_rate = 0
+            # Calculate progress rate and estimated time
+            time_remaining_str = "calculating..."
             if len(progress_history) > 5:
-                progress_rate = (progress_history[-1] - progress_history[-5]) / (5 * update_interval)
-                time_remaining = (100 - pct) / progress_rate if progress_rate > 0 else 0
-                time_remaining_str = f"{int(time_remaining // 60)}m {int(time_remaining % 60)}s"
-            else:
-                time_remaining_str = "calculating..."
+                progress_delta = progress_history[-1] - progress_history[-5]
+                if progress_delta > 0:  # Only if progress is being made
+                    progress_rate = progress_delta / (5 * refresh_interval)
+                    time_remaining = (100 - pct) / progress_rate if progress_rate > 0 else 0
+                    time_remaining_str = f"{int(time_remaining // 60)}m {int(time_remaining % 60)}s"
             
-            # Draw progress bar
+            # Get process info
+            children = []
+            main_cpu = 0
+            main_mem = 0
+            cpu_trend = ""
+            mem_trend = ""
+            
+            if pid and psutil and psutil.pid_exists(pid):
+                try:
+                    p = psutil.Process(pid)
+                    main_cpu = p.cpu_percent(interval=0.1)
+                    main_mem = p.memory_info().rss / (1024*1024)
+                    
+                    # Store historical data
+                    if pid not in cpu_history:
+                        cpu_history[pid] = []
+                    if pid not in mem_history:
+                        mem_history[pid] = []
+                        
+                    cpu_history[pid].append(main_cpu)
+                    mem_history[pid].append(main_mem)
+                    
+                    # Keep only last 10 readings
+                    cpu_history[pid] = cpu_history[pid][-10:]
+                    mem_history[pid] = mem_history[pid][-10:]
+                    
+                    # Calculate trend
+                    cpu_trend = "↑" if len(cpu_history[pid]) > 1 and cpu_history[pid][-1] > cpu_history[pid][-2] else "↓"
+                    mem_trend = "↑" if len(mem_history[pid]) > 1 and mem_history[pid][-1] > mem_history[pid][-2] else "↓"
+                    
+                    # Get child processes
+                    children = p.children(recursive=True)
+                except Exception as proc_err:
+                    print(f"Error getting process info: {proc_err}")
+            
+            # ----- DISPLAY HEADER (always shown) -----
+            print("=" * term_width)
+            print(f"MetaMap Batch Dashboard - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"Output dir: {out_dir} | PID: {pid} | View: {view_mode.upper()} | Refresh: {'ON' if auto_refresh else 'OFF'} ({refresh_interval}s)")
+            print("=" * term_width)
+            
+            # Always show basic progress info
             bar_width = term_width - 20
             filled_width = int(bar_width * pct / 100)
             bar = "█" * filled_width + "░" * (bar_width - filled_width)
+            print(f"\nProgress: [{bar}] {pct:.1f}% ({done}/{total})")
+            print(f"Status: [{batch_status}] | Completed: {done} | Failed: {failed_count} | Retries: {retry_count}")
             
-            print(f"\nProgress   : [{bar}] {pct:.1f}%")
-            print(f"Status     : [{batch_status}] - Total: {total}, Completed: {done}, Failed: {failed_count}, Retries: {retry_count}")
-            if batch_status == "RUNNING":
-                print(f"Est. Time   : {time_remaining_str} remaining at current rate")
+            # ----- DISPLAY CONTENT BASED ON VIEW MODE -----
+            if view_mode == "summary":
+                # CPU/RAM summary
+                print(f"\nMain Process: CPU {main_cpu:.1f}% {cpu_trend} | RAM {main_mem:.1f} MB {mem_trend}")
+                if batch_status == "RUNNING":
+                    print(f"Est. Time Remaining: {time_remaining_str}")
+                
+                # Show worker count
+                worker_count = len(children)
+                if worker_count > 0:
+                    avg_cpu = sum(c.cpu_percent(interval=0.1) for c in children) / worker_count
+                    avg_mem = sum(c.memory_info().rss / (1024*1024) for c in children) / worker_count
+                    print(f"Workers: {worker_count} active | Avg CPU: {avg_cpu:.1f}% | Avg RAM: {avg_mem:.1f} MB")
+                
+                # Show top 5 active workers from state
+                if active_workers:
+                    print("\nActive Workers (Top 5):")
+                    active_worker_items = list(active_workers.items())
+                    for wid, info in active_worker_items[:5]:
+                        worker_file = info.get('current_file', 'Unknown')
+                        worker_status = info.get('status', 'Unknown')
+                        # Truncate filename if too long
+                        if len(worker_file) > 40:
+                            worker_file = worker_file[:37] + "..."
+                        print(f"  {wid:<4} {worker_status:<10} {worker_file}")
+                    if len(active_workers) > 5:
+                        print(f"  ... and {len(active_workers) - 5} more workers (switch to Workers view with 'w')")
+                
+                # Show any active retry batches
+                retry_batches = [(k, v) for k, v in state.items() if k.startswith("retry_") and isinstance(v, dict) and v.get("type") == "retry_batch"]
+                active_retries = [(k, v) for k, v in retry_batches if v.get("status") in ["running", "pending"]]
+                completed_retries = [(k, v) for k, v in retry_batches if v.get("status") == "completed" and v.get("end_time") and 
+                                   (datetime.now() - parse_iso_datetime_compat(v.get("end_time"))).total_seconds() < 3600]  # Show completed within last hour
+                
+                if active_retries:
+                    print("\nActive Retry Batches:")
+                    for retry_id, info in active_retries:
+                        current_file = info.get('current_file', 'N/A')
+                        if len(current_file) > 40:
+                            current_file = current_file[:37] + "..."
+                        progress = info.get('progress', f"0/{info.get('total_files', '?')}")
+                        print(f"  {retry_id[:8]}... {progress:<10} {current_file}")
+                
+                if completed_retries:
+                    print("\nRecently Completed Retry Batches:")
+                    for retry_id, info in completed_retries[:3]:  # Show only the most recent 3
+                        success = info.get('success_count', 0)
+                        total = info.get('total_files', 0)
+                        print(f"  {retry_id[:8]}... {success}/{total} successful")
+                    if len(completed_retries) > 3:
+                        print(f"  ... and {len(completed_retries) - 3} more (switch to Stats view with 't')")
             
-            # Show active workers from state
-            if active_workers:
-                print("\nActive Workers:")
-                print(f"{'Worker':<10} {'Status':<10} {'File':<50}")
-                print("-" * 70)
-                for wid, info in active_workers.items():
-                    worker_file = info.get('current_file', 'Unknown')
-                    worker_status = info.get('status', 'Unknown')
-                    print(f"{wid:<10} {worker_status:<10} {worker_file:<50}")
+            elif view_mode == "workers":
+                # Show detailed worker information in a table
+                print("\n--- Worker Processes ---")
+                if children:
+                    print(f"{'PID':<8} {'CPU%':<8} {'RAM(MB)':<10} {'Status':<10}")
+                    print("-" * 40)
+                    # Sort workers by CPU usage (highest first)
+                    for child in sorted(children, key=lambda c: c.cpu_percent(interval=0.1), reverse=True):
+                        try:
+                            child_cpu = child.cpu_percent(interval=0.1)
+                            child_mem = child.memory_info().rss / (1024*1024)
+                            child_status = child.status()
+                            
+                            # Color coding based on CPU usage
+                            cpu_str = f"{child_cpu:.1f}%"
+                            if child_cpu > 80:
+                                cpu_str += " !!"
+                            elif child_cpu > 50:
+                                cpu_str += " !"
+                            
+                            print(f"{child.pid:<8} {cpu_str:<8} {child_mem:.1f}MB     {child_status:<10}")
+                        except psutil.NoSuchProcess:
+                            continue
+                else:
+                    print("No worker processes detected.")
+                
+                # Show all active workers from state file
+                if active_workers:
+                    print("\n--- Active Workers from State ---")
+                    print(f"{'Worker':<10} {'Status':<10} {'File':<50}")
+                    print("-" * 70)
+                    for wid, info in sorted(active_workers.items()):
+                        worker_file = info.get('current_file', 'Unknown')
+                        worker_status = info.get('status', 'Unknown')
+                        # Truncate filename if too long
+                        if len(worker_file) > 47:
+                            worker_file = worker_file[:44] + "..."
+                        print(f"{wid:<10} {worker_status:<10} {worker_file:<50}")
+                else:
+                    print("\nNo active workers reported in state file.")
             
-            time.sleep(update_interval - 0.1)  # Sleep minus the time for computation
+            elif view_mode == "files":
+                # Show file processing statistics
+                print("\n--- File Processing Details ---")
+                
+                # Count files in different states
+                failed_dir = os.path.join(out_dir, "failed_files")
+                failed_count_actual = 0
+                if os.path.isdir(failed_dir):
+                    failed_count_actual = len([f for f in os.listdir(failed_dir) if f.endswith('.csv')])
+                
+                # Count error files in main directory
+                error_files = []
+                for filename in os.listdir(out_dir):
+                    if filename.endswith('.csv'):
+                        file_path = os.path.join(out_dir, filename)
+                        try:
+                            with open(file_path, 'r') as f:
+                                f.seek(max(0, os.path.getsize(file_path) - 200))
+                                tail = f.read()
+                                if "ERROR" in tail:
+                                    error_files.append(filename)
+                        except:
+                            pass
+                
+                print(f"Files in failed_dir: {failed_count_actual}")
+                print(f"Files with error markers: {len(error_files)}")
+                print(f"Completed files: {done}")
+                print(f"Remaining files: {total - done}")
+                
+                # Recent file activity
+                print("\n--- Recent File Activity ---")
+                file_timings = state.get("file_timings", {})
+                if file_timings:
+                    # Get most recent entries (by timestamp if available, otherwise just last few)
+                    recent_files = list(file_timings.items())[-10:]
+                    for fname, timing in recent_files:
+                        print(f"{fname:<50} {timing}")
+                else:
+                    print("No file timing information available.")
+                
+                # Show some error files if available
+                if error_files:
+                    print("\n--- Error Files (Sample) ---")
+                    for i, fname in enumerate(error_files[:5]):
+                        print(f"{i+1}. {fname}")
+                    if len(error_files) > 5:
+                        print(f"... and {len(error_files) - 5} more error files")
+            
+            elif view_mode == "stats":
+                # Show detailed performance statistics
+                print("\n--- Performance Statistics ---")
+                
+                # Calculate timing statistics
+                file_timings = state.get("file_timings", {})
+                if file_timings:
+                    numeric_timings = [int(d.replace("ms","")) for d in file_timings.values() 
+                                    if isinstance(d, str) and d.replace("ms","").isdigit()]
+                    
+                    if numeric_timings:
+                        num_timed_files = len(numeric_timings)
+                        total_time_ms = sum(numeric_timings)
+                        avg_time_ms = total_time_ms / num_timed_files
+                        min_time = min(numeric_timings)
+                        max_time = max(numeric_timings)
+                        
+                        print(f"Files processed: {num_timed_files}")
+                        print(f"Average time: {avg_time_ms:.0f} ms ({avg_time_ms/1000.0:.2f} s)")
+                        print(f"Fastest file: {min_time} ms ({min_time/1000.0:.2f} s)")
+                        print(f"Slowest file: {max_time} ms ({max_time/1000.0:.2f} s)")
+                        print(f"Total processing time: {total_time_ms/1000.0:.2f} s")
+                
+                # Show retry batch statistics
+                retry_batches = [(k, v) for k, v in state.items() if k.startswith("retry_") and isinstance(v, dict)]
+                if retry_batches:
+                    print("\n--- Retry Batch Statistics ---")
+                    print(f"Total retry batches: {len(retry_batches)}")
+                    
+                    active_retries = [v for _, v in retry_batches if v.get("status") in ["running", "pending"]]
+                    if active_retries:
+                        print(f"Active retry batches: {len(active_retries)}")
+                        
+                    completed_retries = [v for _, v in retry_batches if v.get("status") == "completed"]
+                    if completed_retries:
+                        print(f"Completed retry batches: {len(completed_retries)}")
+                        
+                        # Calculate retry success rate
+                        total_retried = sum(v.get("total_files", 0) for v in completed_retries)
+                        total_success = sum(v.get("success_count", 0) for v in completed_retries)
+                        if total_retried > 0:
+                            success_rate = (total_success / total_retried) * 100
+                            print(f"Retry success rate: {success_rate:.1f}% ({total_success}/{total_retried})")
+                    
+                    # Show details for last 5 retry batches
+                    print("\nRecent Retry Batches:")
+                    print(f"{'ID':<15} {'Status':<10} {'Files':<10} {'Success':<10} {'Duration':<10}")
+                    print("-" * 60)
+                    
+                    # Sort by start time, newest first
+                    sorted_batches = sorted(retry_batches, key=lambda x: x[1].get("start_time", ""), reverse=True)
+                    
+                    for batch_id, batch_info in sorted_batches[:5]:
+                        status = batch_info.get("status", "unknown")
+                        total = batch_info.get("total_files", 0)
+                        success = batch_info.get("success_count", 0)
+                        
+                        # Calculate duration if completed
+                        duration = "N/A"
+                        if status == "completed" and "start_time" in batch_info and "end_time" in batch_info:
+                            start = parse_iso_datetime_compat(batch_info["start_time"])
+                            end = parse_iso_datetime_compat(batch_info["end_time"])
+                            if start and end:
+                                duration_secs = (end - start).total_seconds()
+                                if duration_secs < 60:
+                                    duration = f"{duration_secs:.1f}s"
+                                elif duration_secs < 3600:
+                                    duration = f"{duration_secs/60:.1f}m"
+                                else:
+                                    duration = f"{duration_secs/3600:.1f}h"
+                        
+                        print(f"{batch_id[:12]:<15} {status:<10} {total:<10} {success:<10} {duration:<10}")
+                
+                # Calculate histogram of processing times
+                print("\n--- Processing Time Distribution ---")
+                if len(numeric_timings) > 5:
+                    # Create simplified time buckets
+                    buckets = {
+                        "< 1s": 0,
+                        "1-5s": 0,
+                        "5-10s": 0, 
+                        "10-30s": 0,
+                        "30-60s": 0,
+                        "1-5m": 0,
+                        "> 5m": 0
+                    }
+                    
+                    for t in numeric_timings:
+                        t_sec = t / 1000.0
+                        if t_sec < 1:
+                            buckets["< 1s"] += 1
+                        elif t_sec < 5:
+                            buckets["1-5s"] += 1
+                        elif t_sec < 10:
+                            buckets["5-10s"] += 1
+                        elif t_sec < 30:
+                            buckets["10-30s"] += 1
+                        elif t_sec < 60:
+                            buckets["30-60s"] += 1
+                        elif t_sec < 300:
+                            buckets["1-5m"] += 1
+                        else:
+                            buckets["> 5m"] += 1
+                    
+                    # Display bar chart
+                    max_count = max(buckets.values())
+                    bar_width = term_width - 30
+                    for label, count in buckets.items():
+                        if max_count > 0:
+                            bar_len = int((count / max_count) * bar_width)
+                            bar = "█" * bar_len
+                            print(f"{label:<6}: {count:>4} {bar}")
+                else:
+                    print("Not enough timing data for distribution.")
+                
+                # System resource statistics
+                if psutil:
+                    print("\n--- System Resources ---")
+                    cpu_percent = psutil.cpu_percent(interval=0.5)
+                    mem = psutil.virtual_memory()
+                    print(f"CPU Usage (System): {cpu_percent}%")
+                    print(f"Memory (System): {mem.used/1024/1024/1024:.1f} GB / {mem.total/1024/1024/1024:.1f} GB ({mem.percent}%)")
+                    
+                    # I/O statistics if available
+                    try:
+                        io_counters = psutil.disk_io_counters()
+                        print(f"Disk Read: {io_counters.read_bytes/1024/1024:.1f} MB")
+                        print(f"Disk Write: {io_counters.write_bytes/1024/1024:.1f} MB")
+                    except:
+                        pass
+            
+            # ----- COMMANDS HELP (always shown) -----
+            print("\n--- Commands ---")
+            print("s: Summary view | w: Workers view | f: Files view | t: Stats view")
+            print("p: Pause/resume refresh | +/-: Change refresh rate | q: Quit")
+            
+            # Handle input if not auto-refreshing
+            if not auto_refresh:
+                command = input("\nEnter command: ").strip().lower()
+                if command == 'q':
+                    break
+                elif command == 's':
+                    view_mode = "summary"
+                elif command == 'w':
+                    view_mode = "workers"
+                elif command == 'f':
+                    view_mode = "files"
+                elif command == 't':
+                    view_mode = "stats"
+                elif command == 'p':
+                    auto_refresh = True
+                elif command == '+':
+                    refresh_interval = max(0.5, refresh_interval - 0.5)
+                elif command == '-':
+                    refresh_interval = min(10, refresh_interval + 0.5)
+            elif not has_msvcrt and not has_select:
+                # If we can't do non-blocking input, sleep for the refresh interval
+                time.sleep(refresh_interval)
             
     except KeyboardInterrupt:
         print("\nExiting dashboard…")
