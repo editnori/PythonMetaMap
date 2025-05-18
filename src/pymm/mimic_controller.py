@@ -1441,41 +1441,189 @@ def handle_view_progress(output_dir_str=None):
     state = load_state(out_abs)
     if not state: print(f"No state file ({STATE_FILE}) present in {out_abs}."); return
     
+    # Get basic stats
     total_overall = state.get("total_overall", 0)
     completed_overall_markers = state.get("completed_overall_markers", 0)
+    
+    # Calculate additional metrics
+    retry_count = sum(1 for k in state.keys() if k.startswith("retry_"))
+    
+    # Count failed files by looking in the failed_files directory
+    failed_dir = os.path.join(out_abs, "failed_files")
+    failed_count = 0
+    if os.path.isdir(failed_dir):
+        failed_count = len([f for f in os.listdir(failed_dir) if f.endswith('.csv')])
+    
+    # Count error files that are in the output dir but have error markers
+    error_files = []
+    for filename in os.listdir(out_abs):
+        if filename.endswith('.csv'):
+            file_path = os.path.join(out_abs, filename)
+            try:
+                with open(file_path, 'r') as f:
+                    # Try to read the last line to check for error marker
+                    f.seek(0, os.SEEK_END)
+                    pos = f.tell()
+                    # Read last 200 chars to find markers
+                    last_chunk_size = min(200, pos)
+                    f.seek(pos - last_chunk_size, os.SEEK_SET)
+                    chunk = f.read(last_chunk_size)
+                    if ":ERROR" in chunk:
+                        error_files.append(filename)
+            except:
+                pass
+    
+    error_count = len(error_files)
+    
+    # Calculate success percentage
     pct = (completed_overall_markers / total_overall * 100.0) if total_overall else 0.0
-    print(f"Progress: {completed_overall_markers}/{total_overall} ({pct:.1f}% completed)")
-    active_workers_info = state.get("active_workers_info")
-    if active_workers_info and isinstance(active_workers_info, dict) and any(active_workers_info.values()):
+    
+    # Determine batch status
+    active_workers_info = state.get("active_workers_info", {})
+    end_time = state.get("end_time")
+    
+    if end_time:
+        if completed_overall_markers == total_overall:
+            status = "COMPLETED (SUCCESS)"
+        else:
+            status = "COMPLETED (WITH ERRORS)"
+    elif active_workers_info and any(active_workers_info.values()):
+        status = "RUNNING"
+    else:
+        status = "IDLE OR CRASHED"
+    
+    # Get terminal width
+    try:
+        import shutil
+        term_width, _ = shutil.get_terminal_size((80, 20))
+    except:
+        term_width = 80
+    
+    # Create an ASCII progress bar
+    bar_width = min(50, term_width - 20)
+    filled_width = int(bar_width * pct / 100)
+    bar = "█" * filled_width + "░" * (bar_width - filled_width)
+    
+    # Print summary table
+    print("\n" + "=" * term_width)
+    print(f"BATCH STATUS: [{status}]")
+    print("=" * term_width)
+    
+    print(f"\nProgress: [{bar}] {completed_overall_markers}/{total_overall} ({pct:.1f}%)")
+    
+    # Print statistics
+    print("\nStatistics:")
+    print(f"  Total Files:     {total_overall}")
+    print(f"  Completed:       {completed_overall_markers}")
+    print(f"  Failed Files:    {failed_count}")
+    print(f"  Error Markers:   {error_count}")
+    print(f"  Retry Attempts:  {retry_count}")
+    
+    # Display remaining files count
+    remaining = total_overall - completed_overall_markers
+    if remaining > 0:
+        print(f"  Remaining:       {remaining}")
+    
+    # Active workers info
+    if active_workers_info and any(active_workers_info.values()):
         active_files_display = [f"{wid}:{info.get('current_file', 'N/A')}" for wid, info in active_workers_info.items() if isinstance(info, dict)]
-        if active_files_display: print(f"  Active files (from state): {', '.join(active_files_display)}")
-    elif not state.get("end_time"): print("  No active file information in current state (or batch just started).")
+        if active_files_display: 
+            print("\nActive Workers:")
+            for worker_info in active_files_display:
+                print(f"  {worker_info}")
+    elif not state.get("end_time"): 
+        print("\n  No active workers detected. The batch might be idle or crashed.")
+    
+    # Time calculation
     if "start_time" in state:
-        start_dt = parse_iso_datetime_compat(state["start_time"]); end_ts_str = state.get("end_time")
+        start_dt = parse_iso_datetime_compat(state["start_time"])
+        end_ts_str = state.get("end_time")
+        
         if end_ts_str:
-            end_dt = parse_iso_datetime_compat(end_ts_str); pre_calculated_elapsed = state.get("elapsed_seconds")
-            if pre_calculated_elapsed is not None: elapsed = int(pre_calculated_elapsed)
-            elif start_dt and end_dt and end_dt >= start_dt: elapsed = int((end_dt - start_dt).total_seconds())
-            else: elapsed = None
-            if elapsed is not None: print(f"Total elapsed time: {elapsed//60} min {elapsed%60} sec (Batch completed)")
-            else: print("Total elapsed time: Could not determine (Batch completed, inconsistent times).")
+            end_dt = parse_iso_datetime_compat(end_ts_str)
+            pre_calculated_elapsed = state.get("elapsed_seconds")
+            
+            if pre_calculated_elapsed is not None: 
+                elapsed = int(pre_calculated_elapsed)
+            elif start_dt and end_dt and end_dt >= start_dt: 
+                elapsed = int((end_dt - start_dt).total_seconds())
+            else: 
+                elapsed = None
+                
+            if elapsed is not None: 
+                hours = elapsed // 3600
+                minutes = (elapsed % 3600) // 60
+                seconds = elapsed % 60
+                print(f"\nTotal processing time: {hours}h {minutes}m {seconds}s (Batch completed)")
+            else: 
+                print("\nTotal elapsed time: Could not determine (Batch completed, inconsistent times).")
         elif start_dt:
             now = datetime.now()
-            if now >= start_dt: elapsed = int((now - start_dt).total_seconds()); print(f"Elapsed time so far: {elapsed//60} min {elapsed%60} sec")
-            else: print("Elapsed time so far: Start time is in the future. Check system clock/state file.")
-        else: print("Elapsed time: Could not determine (start time missing/invalid).")
+            if now >= start_dt: 
+                elapsed = int((now - start_dt).total_seconds())
+                hours = elapsed // 3600
+                minutes = (elapsed % 3600) // 60
+                seconds = elapsed % 60
+                print(f"\nElapsed time so far: {hours}h {minutes}m {seconds}s")
+                
+                # Calculate estimated time remaining
+                if completed_overall_markers > 0 and remaining > 0:
+                    avg_time_per_file = elapsed / completed_overall_markers
+                    est_remaining = avg_time_per_file * remaining
+                    est_hours = int(est_remaining // 3600)
+                    est_minutes = int((est_remaining % 3600) // 60)
+                    est_seconds = int(est_remaining % 60)
+                    print(f"Estimated time remaining: {est_hours}h {est_minutes}m {est_seconds}s")
+            else: 
+                print("\nElapsed time so far: Start time is in the future. Check system clock/state file.")
+        else: 
+            print("\nElapsed time: Could not determine (start time missing/invalid).")
+    
+    # Show performance metrics
     file_timings = state.get("file_timings", {})
     if file_timings:
-        num_timed_files = len(file_timings); total_time_ms = sum(int(d.replace("ms","")) for d in file_timings.values() if d.replace("ms","").isdigit())
-        if num_timed_files > 0:
+        # Filter out non-numeric timing entries
+        numeric_timings = [int(d.replace("ms","")) for d in file_timings.values() 
+                        if isinstance(d, str) and d.replace("ms","").isdigit()]
+        
+        if numeric_timings:
+            num_timed_files = len(numeric_timings)
+            total_time_ms = sum(numeric_timings)
             avg_time_ms = total_time_ms / num_timed_files
-            print(f"  Average time per file: {avg_time_ms:.0f} ms ({avg_time_ms/1000.0:.2f} s) over {num_timed_files} timed files.")
-            remaining_files = total_overall - completed_overall_markers
-            if remaining_files > 0 and not state.get("end_time"):
-                etr_seconds = (avg_time_ms / 1000.0) * remaining_files
-                print(f"  Estimated time remaining (ETR): {int(etr_seconds // 60)} min {int(etr_seconds % 60)} sec for {remaining_files} files")
-        else: print("  No valid file timing data to calculate average or ETR.")
-    else: print("  No file timing data recorded yet.")
+            
+            print("\nPerformance Metrics:")
+            print(f"  Average time per file: {avg_time_ms:.0f} ms ({avg_time_ms/1000.0:.2f} s) over {num_timed_files} timed files")
+            
+            # Show min/max processing times
+            min_time = min(numeric_timings)
+            max_time = max(numeric_timings)
+            print(f"  Fastest file: {min_time} ms ({min_time/1000.0:.2f} s)")
+            print(f"  Slowest file: {max_time} ms ({max_time/1000.0:.2f} s)")
+            
+            # Estimated time remaining
+            if remaining > 0 and not state.get("end_time"):
+                etr_seconds = (avg_time_ms / 1000.0) * remaining
+                etr_hours = int(etr_seconds // 3600)
+                etr_minutes = int((etr_seconds % 3600) // 60)
+                etr_seconds = int(etr_seconds % 60)
+                print(f"  Estimated time remaining (ETR): {etr_hours}h {etr_minutes}m {etr_seconds}s for {remaining} files")
+        else: 
+            print("\n  No valid file timing data to calculate average or ETR.")
+    else: 
+        print("\n  No file timing data recorded yet.")
+    
+    # Option to view failed files
+    if failed_count > 0 or error_count > 0:
+        print(f"\n--- Failed/Error Files Management ---")
+        print(f"  Failed files in directory: {failed_count}")
+        print(f"  Files with error markers: {error_count}")
+        
+        try:
+            choice = input("\nWould you like to view failed files? (y/n): ").strip().lower()
+            if choice == 'y':
+                view_failed_files(out_abs, failed_dir, error_files)
+        except:
+            pass
 
 def handle_install_metamap():
     print("\n--- Install MetaMap ---")
@@ -1494,45 +1642,168 @@ def handle_install_metamap():
 def handle_monitor_dashboard():
     print("\n--- Monitor Dashboard (live) ---")
     import psutil, time
+    from datetime import datetime
+    
+    try:
+        import shutil
+        term_width, term_height = shutil.get_terminal_size((80, 20))
+    except:
+        term_width, term_height = 80, 20
+    
     default_output = get_config_value("default_output_dir", "./output_csvs")
     out_dir = input(f"Output dir of running batch (default: {default_output}): ").strip() or default_output
     state_path = os.path.join(out_dir, STATE_FILE)
     pid_path = os.path.join(out_dir, PID_FILE)
+    
     if not os.path.exists(state_path):
         print("State file not found – batch may not be running.")
         return
+    
     try:
         pid = int(open(pid_path).read().strip()) if os.path.exists(pid_path) else None
     except Exception:
         pid = None
+    
+    # For storing historical data to show trends
+    cpu_history = {}
+    mem_history = {}
+    progress_history = []
+    
     try:
+        last_update_time = time.time()
+        update_interval = 2  # Update every 2 seconds
+        
         while True:
+            current_time = time.time()
+            if current_time - last_update_time < update_interval:
+                time.sleep(0.1)  # Small sleep to prevent CPU spinning
+                continue
+                
+            last_update_time = current_time
             os.system('cls' if os.name == 'nt' else 'clear')
-            print("=== MetaMap Batch Dashboard ===")
+            
+            print("=" * term_width)
+            print(f"MetaMap Batch Dashboard - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - Press Ctrl+C to exit")
+            print("=" * term_width)
             print(f"Output dir : {out_dir}")
+            
+            # Load the current state
+            try:
+                with open(state_path) as f:
+                    state = json.load(f)
+            except Exception as e:
+                print(f"Error reading state file: {e}")
+                state = {}
+            
+            # Process statistics
             if pid:
                 print(f"Main PID   : {pid}")
                 if psutil and psutil.pid_exists(pid):
-                    p = psutil.Process(pid)
-                    cpu = p.cpu_percent(interval=0.5)
-                    mem = p.memory_info().rss / (1024*1024)
-                    print(f"CPU        : {cpu:.1f}%  |  RAM: {mem:.1f} MB")
+                    try:
+                        p = psutil.Process(pid)
+                        main_cpu = p.cpu_percent(interval=0.1)
+                        main_mem = p.memory_info().rss / (1024*1024)
+                        
+                        # Store historical data
+                        if pid not in cpu_history:
+                            cpu_history[pid] = []
+                        if pid not in mem_history:
+                            mem_history[pid] = []
+                            
+                        cpu_history[pid].append(main_cpu)
+                        mem_history[pid].append(main_mem)
+                        
+                        # Keep only last 10 readings
+                        cpu_history[pid] = cpu_history[pid][-10:]
+                        mem_history[pid] = mem_history[pid][-10:]
+                        
+                        # Calculate trend
+                        cpu_trend = "↑" if len(cpu_history[pid]) > 1 and cpu_history[pid][-1] > cpu_history[pid][-2] else "↓"
+                        mem_trend = "↑" if len(mem_history[pid]) > 1 and mem_history[pid][-1] > mem_history[pid][-2] else "↓"
+                        
+                        print(f"CPU        : {main_cpu:.1f}% {cpu_trend}  |  RAM: {main_mem:.1f} MB {mem_trend}")
+                        
+                        # Get child processes
+                        children = p.children(recursive=True)
+                        if children:
+                            print("\nWorker Processes:")
+                            print(f"{'PID':<8} {'CPU%':<8} {'RAM(MB)':<10} {'Status':<10}")
+                            print("-" * 40)
+                            for child in children:
+                                try:
+                                    child_cpu = child.cpu_percent(interval=0.1)
+                                    child_mem = child.memory_info().rss / (1024*1024)
+                                    child_status = child.status()
+                                    
+                                    # Color coding based on CPU usage
+                                    cpu_color = ""
+                                    if child_cpu > 80:
+                                        cpu_str = f"{child_cpu:.1f}% !!"
+                                    elif child_cpu > 50:
+                                        cpu_str = f"{child_cpu:.1f}% !"
+                                    else:
+                                        cpu_str = f"{child_cpu:.1f}%"
+                                        
+                                    print(f"{child.pid:<8} {cpu_str:<8} {child_mem:.1f}MB     {child_status:<10}")
+                                except psutil.NoSuchProcess:
+                                    continue
+                    except Exception as proc_err:
+                        print(f"Error getting process info: {proc_err}")
                 else:
                     print("Process not running.")
-            with open(state_path) as f:
-                state = json.load(f)
+            
+            # Batch progress
             total = state.get('total_overall', 0)
             done = state.get('completed_overall_markers', 0)
-            pct = done/total*100 if total else 0
-            print(f"Progress   : {done}/{total} ({pct:.1f}%)")
-            active = state.get('active_workers_info', {})
-            if active:
-                print("Active workers:")
-                for wid, info in active.items():
-                    print(f"  {wid}: {info.get('status')} – {info.get('current_file','')}")
+            failed_count = len(state.get('file_timings', {}).get('failed_files', []))
+            retry_count = sum(1 for k, v in state.items() if k.startswith('retry_'))
+            
+            # Determine batch status
+            active_workers = state.get('active_workers_info', {})
+            if not active_workers and state.get('end_time'):
+                batch_status = "COMPLETED"
+            elif active_workers:
+                batch_status = "RUNNING"
             else:
-                print("No active workers recorded.")
-            time.sleep(2)
+                batch_status = "UNKNOWN"
+            
+            pct = done/total*100 if total else 0
+            
+            # Store progress for history
+            progress_history.append(pct)
+            progress_history = progress_history[-30:]  # Keep last 30 readings
+            
+            # Calculate progress rate
+            progress_rate = 0
+            if len(progress_history) > 5:
+                progress_rate = (progress_history[-1] - progress_history[-5]) / (5 * update_interval)
+                time_remaining = (100 - pct) / progress_rate if progress_rate > 0 else 0
+                time_remaining_str = f"{int(time_remaining // 60)}m {int(time_remaining % 60)}s"
+            else:
+                time_remaining_str = "calculating..."
+            
+            # Draw progress bar
+            bar_width = term_width - 20
+            filled_width = int(bar_width * pct / 100)
+            bar = "█" * filled_width + "░" * (bar_width - filled_width)
+            
+            print(f"\nProgress   : [{bar}] {pct:.1f}%")
+            print(f"Status     : [{batch_status}] - Total: {total}, Completed: {done}, Failed: {failed_count}, Retries: {retry_count}")
+            if batch_status == "RUNNING":
+                print(f"Est. Time   : {time_remaining_str} remaining at current rate")
+            
+            # Show active workers from state
+            if active_workers:
+                print("\nActive Workers:")
+                print(f"{'Worker':<10} {'Status':<10} {'File':<50}")
+                print("-" * 70)
+                for wid, info in active_workers.items():
+                    worker_file = info.get('current_file', 'Unknown')
+                    worker_status = info.get('status', 'Unknown')
+                    print(f"{wid:<10} {worker_status:<10} {worker_file:<50}")
+            
+            time.sleep(update_interval - 0.1)  # Sleep minus the time for computation
+            
     except KeyboardInterrupt:
         print("\nExiting dashboard…")
 
@@ -1594,6 +1865,11 @@ def handle_clear_output_directory():
 def handle_list_processed_files():
     """List pending and completed files in the batch processing."""
     out_dir = get_config_value("default_output_dir", "./output_csvs")
+    try:
+        out_dir = input(f"Enter output directory to check (default: {out_dir}): ").strip() or out_dir
+    except:
+        pass
+        
     if not os.path.isdir(out_dir):
         print("No valid output directory configured. Please set one first.")
         return
@@ -1610,100 +1886,207 @@ def handle_list_processed_files():
             if filename.endswith('.csv'):
                 all_csv_files.append(os.path.join(root, filename))
     
-    print(f"\nTotal output files found: {len(all_csv_files)}")
-    
     # Find files in failed directory
     failed_files = []
     if os.path.exists(failed_dir):
         for filename in os.listdir(failed_dir):
             file_path = os.path.join(failed_dir, filename)
             if os.path.isfile(file_path):
-                failed_files.append(filename)
-    
-    if failed_files:
-        print(f"Failed files: {len(failed_files)}")
+                failed_files.append(file_path)
     
     # Check for error markers in output files
     error_files = []
+    completed_files = []
+    incomplete_files = []
+    
     for csv_path in all_csv_files:
         try:
-            with open(csv_path, 'r') as f:
+            with open(csv_path, 'r', encoding='utf-8', errors='replace') as f:
+                # Check if file is complete
+                first_line = None
                 last_line = None
-                for line in f:
-                    if line.strip():
-                        last_line = line.strip()
-                if last_line and ":ERROR" in last_line:
-                    error_files.append(os.path.basename(csv_path))
+                first_line = f.readline().strip()
+                
+                # Get last line using seek
+                f.seek(0, os.SEEK_END)
+                pos = f.tell()
+                
+                # Read last 200 chars to extract end marker
+                if pos > 200:
+                    f.seek(pos - 200)
+                    f.readline()  # Skip partial first line
+                else:
+                    f.seek(0)
+                
+                last_lines = f.readlines()
+                if last_lines:
+                    last_line = last_lines[-1].strip()
+                
+                # Categorize the file
+                if first_line and first_line.startswith("META_BATCH_START_NOTE_ID:"):
+                    if last_line and last_line.startswith("META_BATCH_END_NOTE_ID:"):
+                        if ":ERROR" in last_line:
+                            error_files.append(csv_path)
+                        else:
+                            completed_files.append(csv_path)
+                    else:
+                        incomplete_files.append(csv_path)
+                else:
+                    # Unknown format
+                    incomplete_files.append(csv_path)
+                    
+        except:
+            # If we can't read it for any reason, consider it incomplete
+            incomplete_files.append(csv_path)
+    
+    # Count files with concepts
+    files_with_concepts = 0
+    total_concepts = 0
+    
+    for csv_path in completed_files:
+        try:
+            with open(csv_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+                line_count = content.count('\n')
+                
+                # A complete file with only START marker, header, and END marker has 3 lines
+                if line_count > 3:
+                    files_with_concepts += 1
+                    # Rough estimate: each concept is one line
+                    concept_count = line_count - 3
+                    total_concepts += concept_count
         except:
             pass
     
-    if error_files:
-        print(f"Files with error markers: {len(error_files)}")
+    # Get terminal width for display
+    try:
+        import shutil
+        term_width, _ = shutil.get_terminal_size((80, 20))
+    except:
+        term_width = 80
     
-    # Display menu for viewing files
+    # Print summary
+    print("\n" + "=" * term_width)
+    print(f"FILE PROCESSING SUMMARY - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * term_width)
+    
+    print(f"\nTotal files:          {len(all_csv_files)}")
+    print(f"Completed files:      {len(completed_files)} ({len(completed_files)/len(all_csv_files)*100:.1f}% if {len(all_csv_files)}>0 else 0)%)")
+    print(f"Files with concepts:  {files_with_concepts} ({files_with_concepts/len(completed_files)*100:.1f}% if {len(completed_files)}>0 else 0)%)")
+    print(f"Total concepts:       {total_concepts:,}")
+    print(f"Failed files:         {len(failed_files)}")
+    print(f"Files with errors:    {len(error_files)}")
+    print(f"Incomplete files:     {len(incomplete_files)}")
+    
     while True:
-        print("\n1. View a completed file")
-        if failed_files:
-            print("2. View a failed file")
-        if error_files:
-            print("3. View a file with error marker")
-        print("4. Back to main menu")
+        print("\n--- File Management ---")
+        print("1. View completed files")
+        print("2. View files with error markers")
+        print("3. View incomplete files")
+        print("4. View failed files (from failed_files directory)")
+        print("5. Search for file by name")
+        print("6. Return to main menu")
         
-        choice = input("Enter your choice: ").strip()
-        
-        if choice == '1':
-            view_file_contents(out_dir, all_csv_files)
-        elif choice == '2' and failed_files:
-            view_file_contents(failed_dir, [os.path.join(failed_dir, f) for f in failed_files])
-        elif choice == '3' and error_files:
-            error_file_paths = [f for f in all_csv_files if os.path.basename(f) in error_files]
-            view_file_contents(out_dir, error_file_paths)
-        elif choice == '4':
-            break
-        else:
-            print("Invalid choice. Try again.")
-
-def view_file_contents(directory, file_list):
-    """View contents of a file from the specified list."""
-    if not file_list:
-        print("No files available to view.")
-        return
-    
-    print("\nEnter partial filename to search for:")
-    search_term = input().strip().lower()
-    
-    if not search_term:
-        return
-    
-    # Find matching files
-    matches = []
-    for file_path in file_list:
-        if search_term.lower() in os.path.basename(file_path).lower():
-            matches.append(file_path)
-    
-    if not matches:
-        print("No matching files found.")
-        input("Press Enter to continue...")
-        return
-    
-    if len(matches) > 1:
-        print("\nMultiple matches found:")
-        for i, path in enumerate(matches[:20], 1):
-            print(f"{i}. {os.path.basename(path)}")
-        
-        if len(matches) > 20:
-            print(f"... and {len(matches) - 20} more matches")
-        
-        idx_choice = input("\nEnter number to view (or 0 to cancel): ").strip()
-        if not idx_choice.isdigit() or int(idx_choice) < 1 or int(idx_choice) > min(len(matches), 20):
+        try:
+            choice = input("\nEnter your choice (1-6): ").strip()
+        except:
             return
         
-        file_path = matches[int(idx_choice) - 1]
-    else:
-        file_path = matches[0]
+        if choice == '1' and completed_files:
+            view_file_list("Completed Files", completed_files)
+        elif choice == '2' and error_files:
+            view_file_list("Files with Error Markers", error_files)
+        elif choice == '3' and incomplete_files:
+            view_file_list("Incomplete Files", incomplete_files)
+        elif choice == '4' and failed_files:
+            view_file_list("Failed Files", failed_files)
+        elif choice == '5':
+            search_term = input("\nEnter part of filename to search: ").strip().lower()
+            if search_term:
+                # Search across all file categories
+                search_results = []
+                for file_path in all_csv_files + failed_files:
+                    if search_term in os.path.basename(file_path).lower():
+                        search_results.append(file_path)
+                
+                if search_results:
+                    view_file_list(f"Search Results for '{search_term}'", search_results)
+                else:
+                    print(f"No files matching '{search_term}' found.")
+        elif choice == '6':
+            return
+        else:
+            print("Invalid choice or no files in that category.")
+
+def view_file_list(category_name, file_list):
+    """Display a list of files with pagination and allow user to select one to view."""
+    if not file_list:
+        print("No files to display.")
+        return
     
-    display_file_snippet(file_path)
-    input("\nPress Enter to continue...")
+    # Sort files by name for easier browsing
+    sorted_files = sorted(file_list, key=lambda x: os.path.basename(x))
+    
+    page_size = 20
+    total_pages = (len(sorted_files) + page_size - 1) // page_size
+    current_page = 1
+    
+    while True:
+        start_idx = (current_page - 1) * page_size
+        end_idx = min(start_idx + page_size, len(sorted_files))
+        
+        print(f"\n=== {category_name} (Page {current_page}/{total_pages}) ===")
+        print(f"{'#':<4} {'Filename':<50} {'Size':<10} {'Modified':<20}")
+        print("-" * 85)
+        
+        for i, file_path in enumerate(sorted_files[start_idx:end_idx], start_idx + 1):
+            # Get file info
+            try:
+                file_size = os.path.getsize(file_path)
+                mod_time = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime('%Y-%m-%d %H:%M')
+                
+                # Format filename (truncate if too long)
+                filename = os.path.basename(file_path)
+                if len(filename) > 46:
+                    display_name = filename[:43] + "..."
+                else:
+                    display_name = filename
+                
+                # Format size
+                if file_size < 1024:
+                    size_str = f"{file_size} B"
+                elif file_size < 1024 * 1024:
+                    size_str = f"{file_size/1024:.1f} KB"
+                else:
+                    size_str = f"{file_size/(1024*1024):.1f} MB"
+                
+                print(f"{i:<4} {display_name:<50} {size_str:<10} {mod_time:<20}")
+            except:
+                print(f"{i:<4} {os.path.basename(file_path):<50} {'N/A':<10} {'N/A':<20}")
+        
+        # Pagination controls
+        print("\nOptions:")
+        if total_pages > 1:
+            print(f"  n: Next page | p: Previous page | #: View file # | q: Back to menu")
+        else:
+            print(f"  #: View file # | q: Back to menu")
+        
+        command = input("\nEnter command: ").strip().lower()
+        
+        if command == 'q':
+            return
+        elif command == 'n' and current_page < total_pages:
+            current_page += 1
+        elif command == 'p' and current_page > 1:
+            current_page -= 1
+        elif command.isdigit():
+            file_num = int(command)
+            if 1 <= file_num <= len(sorted_files):
+                view_file_details(sorted_files[file_num-1])
+            else:
+                print(f"Invalid file number. Enter 1-{len(sorted_files)}.")
+        else:
+            print("Invalid command.")
 
 def display_file_snippet(file_path):
     """Display a snippet of a file."""
@@ -1768,6 +2151,300 @@ def display_file_snippet(file_path):
                     print(f"\n... and {len(lines) - 20} more lines")
     except Exception as e:
         print(f"Error reading file: {e}")
+    
+    # Wait for user to press Enter before returning
+    try:
+        input("\nPress Enter to continue...")
+    except:
+        pass
+
+def handle_retry_failed_files():
+    """Batch retry all failed or error-marked files with increased timeout."""
+    print("\n--- Retry Failed Files ---")
+    
+    # Get directories
+    default_input_dir = get_config_value("default_input_dir", "./input_notes")
+    default_output_dir = get_config_value("default_output_dir", "./output_csvs")
+    
+    try:
+        output_dir = input(f"Enter output directory with failed files (default: {default_output_dir}): ").strip() or default_output_dir
+    except EOFError:
+        output_dir = default_output_dir
+    
+    out_abs = os.path.abspath(os.path.expanduser(output_dir))
+    
+    if not os.path.isdir(out_abs):
+        print(f"Error: Output directory not found: {out_abs}")
+        return
+    
+    # Find failed files
+    failed_dir = os.path.join(out_abs, "failed_files")
+    failed_files = []
+    
+    if os.path.isdir(failed_dir):
+        for filename in os.listdir(failed_dir):
+            if filename.endswith('.csv'):
+                failed_file_path = os.path.join(failed_dir, filename)
+                try:
+                    with open(failed_file_path, 'r', encoding='utf-8', errors='replace') as f:
+                        first_line = f.readline().strip()
+                        if first_line.startswith("META_BATCH_START_NOTE_ID:"):
+                            original_filename = first_line.replace("META_BATCH_START_NOTE_ID:", "")
+                            failed_files.append((filename, original_filename, "failed_dir"))
+                except:
+                    # If we can't read it, still include it with an unknown original name
+                    failed_files.append((filename, filename.replace(".csv", ".txt"), "failed_dir_unreadable"))
+    
+    # Find files with error markers in the main output directory
+    error_files = []
+    for filename in os.listdir(out_abs):
+        if filename.endswith('.csv'):
+            file_path = os.path.join(out_abs, filename)
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    first_line = f.readline().strip()
+                    original_filename = first_line.replace("META_BATCH_START_NOTE_ID:", "") if first_line.startswith("META_BATCH_START_NOTE_ID:") else None
+                    
+                    # Check for error marker in the last part of the file
+                    f.seek(0, os.SEEK_END)
+                    pos = f.tell()
+                    last_chars = min(200, pos)
+                    f.seek(pos - last_chars)
+                    last_content = f.read(last_chars)
+                    
+                    if ":ERROR" in last_content and original_filename:
+                        error_files.append((filename, original_filename, "error_marker"))
+            except:
+                continue
+    
+    # Combine and deduplicate files
+    all_failed_files = failed_files + error_files
+    
+    # Deduplicate based on original filename
+    unique_files = {}
+    for csv_name, orig_name, file_type in all_failed_files:
+        # Prioritize files from failed_dir if duplicates exist
+        if orig_name not in unique_files or file_type == "failed_dir":
+            unique_files[orig_name] = (csv_name, file_type)
+    
+    if not unique_files:
+        print("No failed files found to retry.")
+        return
+    
+    print(f"\nFound {len(unique_files)} failed files to retry.")
+    
+    # Ask for increased timeout
+    default_timeout = int(get_config_value("pymm_timeout", str(DEFAULT_PYMM_TIMEOUT)))
+    try:
+        new_timeout = input(f"Enter timeout in seconds for retries (default: {default_timeout * 2}, original: {default_timeout}): ")
+        if new_timeout.strip() and new_timeout.isdigit():
+            timeout = int(new_timeout)
+        else:
+            timeout = default_timeout * 2  # Double the default timeout for retries
+    except:
+        timeout = default_timeout * 2
+    
+    print(f"Using timeout: {timeout} seconds per file")
+    
+    # Ask for batch confirmation
+    confirmation = input(f"Retry processing {len(unique_files)} files? (yes/no): ").strip().lower()
+    if confirmation != "yes":
+        print("Retry cancelled.")
+        return
+    
+    # Process files
+    print("\nStarting batch retry processing...")
+    
+    # Set environment variable for the increased timeout
+    os.environ["PYMM_TIMEOUT"] = str(timeout)
+    
+    metamap_binary_path = get_config_value("metamap_binary_path")
+    if not metamap_binary_path:
+        print("Error: MetaMap binary path not configured")
+        return
+    
+    # Initialize PyMetaMap only once
+    try:
+        print("Initializing PyMetaMap...")
+        from pymm import Metamap as PyMetaMap
+        mm = None  # Will initialize for each file to avoid cross-contamination
+        
+        # Process each file
+        success_count = 0
+        error_count = 0
+        
+        for i, (orig_filename, (csv_name, file_type)) in enumerate(unique_files.items(), 1):
+            print(f"\n[{i}/{len(unique_files)}] Processing: {orig_filename}")
+            
+            # Get paths
+            input_path = os.path.join(default_input_dir, orig_filename)
+            output_csv_path = derive_output_csv_path(out_abs, orig_filename)
+            
+            # Check input file
+            if not os.path.exists(input_path):
+                print(f"  Error: Input file not found: {input_path}")
+                error_count += 1
+                continue
+            
+            # Backup existing output file if any
+            if os.path.exists(output_csv_path):
+                backup_path = output_csv_path + f".bak.{int(time.time())}"
+                try:
+                    shutil.copy2(output_csv_path, backup_path)
+                    print(f"  Existing output file backed up to: {os.path.basename(backup_path)}")
+                    os.remove(output_csv_path)
+                except Exception as e:
+                    print(f"  Warning: Failed to backup/remove existing output file: {e}")
+            
+            # Process the file
+            try:
+                # Create a fresh MetaMap instance for each file
+                if mm is not None:
+                    try:
+                        mm.close()
+                    except:
+                        pass
+                mm = PyMetaMap(metamap_binary_path, debug=True)
+                
+                # Read input file
+                with open(input_path, 'r', encoding='utf-8') as f_in:
+                    whole_note = f_in.read().strip()
+                
+                if not whole_note:
+                    print("  Input file is empty. Skipping.")
+                    error_count += 1
+                    continue
+                
+                lines = [whole_note]
+                
+                print(f"  Processing with timeout {timeout}s...")
+                start_time = time.time()
+                
+                # Run MetaMap
+                mmos_iter = mm.parse(lines, timeout=timeout)
+                
+                # Check result
+                if not mmos_iter or (hasattr(mmos_iter, '__len__') and len(mmos_iter) == 0):
+                    print("  Warning: No concepts found or XML parsing error")
+                    # Write empty output with headers
+                    with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
+                        f_out.write(f"{START_MARKER_PREFIX}{orig_filename}\n")
+                        writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
+                        writer.writerow(CSV_HEADER)
+                        f_out.write(f"{END_MARKER_PREFIX}{orig_filename}:ERROR\n")
+                    print("  Created empty output CSV with error marker")
+                    error_count += 1
+                    continue
+                
+                # Extract concepts
+                concepts_list = [concept for mmo_item in mmos_iter for concept in mmo_item]
+                print(f"  Found {len(concepts_list)} concepts")
+                
+                # Write to CSV (simplified version)
+                with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
+                    f_out.write(f"{START_MARKER_PREFIX}{orig_filename}\n")
+                    writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
+                    writer.writerow(CSV_HEADER)
+                    
+                    concept_count = 0
+                    if concepts_list:
+                        for concept in concepts_list:
+                            try:
+                                if not concept.ismapping:
+                                    continue
+                                
+                                concept_name = getattr(concept, 'concept_name', getattr(concept, 'preferred_name', concept.matched))
+                                pref_name = getattr(concept, 'preferred_name', concept_name)
+                                phrase_text = getattr(concept, 'phrase_text', None) or getattr(concept, 'phrase', None) or getattr(concept, 'matched', '')
+                                sem_types_formatted = ":".join(concept.semtypes) if getattr(concept, 'semtypes', None) else ""
+                                sources_formatted = "|".join(concept.sources) if getattr(concept, 'sources', None) else ""
+                                
+                                # Get position value (simplified)
+                                position_value = ""
+                                if concept.pos_start is not None and concept.pos_length is not None:
+                                    position_value = f"{concept.pos_start}:{concept.pos_length}"
+                                elif concept.phrase_start is not None and concept.phrase_length is not None:
+                                    position_value = f"{concept.phrase_start}:{concept.phrase_length}"
+                                
+                                row_data = [
+                                    concept.cui,
+                                    concept.score,
+                                    concept_name,
+                                    pref_name,
+                                    phrase_text,
+                                    sem_types_formatted,
+                                    sources_formatted,
+                                    position_value,
+                                ]
+                                writer.writerow([pymm_escape_csv_field(field) for field in row_data])
+                                concept_count += 1
+                            except Exception as e_concept:
+                                print(f"  Error processing concept: {e_concept}")
+                    
+                    # Write end marker
+                    if concept_count > 0:
+                        f_out.write(f"{END_MARKER_PREFIX}{orig_filename}\n")
+                        success_status = True
+                    else:
+                        f_out.write(f"{END_MARKER_PREFIX}{orig_filename}:ERROR\n")
+                        success_status = False
+                
+                end_time = time.time()
+                duration = end_time - start_time
+                
+                if success_status:
+                    print(f"  Success: {concept_count} concepts written in {duration:.2f} seconds")
+                    success_count += 1
+                    
+                    # If the file was in the failed_dir, remove it
+                    if file_type == "failed_dir":
+                        failed_file_path = os.path.join(failed_dir, csv_name)
+                        if os.path.exists(failed_file_path):
+                            try:
+                                os.remove(failed_file_path)
+                                print(f"  Removed file from failed_dir: {csv_name}")
+                            except:
+                                pass
+                else:
+                    print(f"  Failed: No concepts written in {duration:.2f} seconds")
+                    error_count += 1
+                
+            except Exception as e:
+                print(f"  Error processing file: {e}")
+                error_count += 1
+                
+                # Write error marker
+                try:
+                    with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
+                        f_out.write(f"{START_MARKER_PREFIX}{orig_filename}\n")
+                        writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
+                        writer.writerow(CSV_HEADER)
+                        f_out.write(f"{END_MARKER_PREFIX}{orig_filename}:ERROR\n")
+                    print("  Created output CSV with error marker")
+                except:
+                    pass
+        
+        # Final cleanup
+        if mm is not None:
+            try:
+                mm.close()
+            except:
+                pass
+        
+        # Summary
+        print("\n=== Retry Processing Summary ===")
+        print(f"Total Files: {len(unique_files)}")
+        print(f"Successful : {success_count}")
+        print(f"Failed     : {error_count}")
+        
+        # Reset environment variable
+        if "PYMM_TIMEOUT" in os.environ:
+            del os.environ["PYMM_TIMEOUT"]
+            
+    except Exception as e:
+        print(f"Error in batch retry processing: {e}")
+        import traceback
+        traceback.print_exc()
 
 def interactive_main_loop():
     if not logging.getLogger().hasHandlers():
@@ -1792,10 +2469,11 @@ def interactive_main_loop():
         print("6. List Pending/Completed Files")
         print("7. Kill All MetaMap Processes")
         print("8. Clear Output Directory")
-        print("9. Reset All Saved Configurations to Defaults")
-        print("10. Exit")
+        print("9. Retry Failed Files")
+        print("10. Reset All Saved Configurations to Defaults")
+        print("11. Exit")
         try:
-            choice = input("Enter your choice (0-10): ").strip()
+            choice = input("Enter your choice (0-11): ").strip()
         except EOFError:
             print("\nExiting due to EOF.")
             break
@@ -1837,8 +2515,10 @@ def interactive_main_loop():
         elif choice == '8':
             handle_clear_output_directory()
         elif choice == '9':
-            handle_reset_settings()
+            handle_retry_failed_files()
         elif choice == '10':
+            handle_reset_settings()
+        elif choice == '11':
             print("Exiting.")
             break
         else:
@@ -2070,6 +2750,409 @@ def main():
             print(f"Invalid command or arguments: {' '.join(sys.argv)}")
             print("Run 'pymm-cli' or 'pymm-cli interactive' for interactive mode or help.")
         sys.exit(1)
+
+def view_failed_files(output_dir, failed_dir, error_files):
+    """Display information about failed files and allow viewing snippets."""
+    all_failed_files = []
+    
+    # Collect files from failed directory
+    if os.path.isdir(failed_dir):
+        for filename in os.listdir(failed_dir):
+            if filename.endswith('.csv'):
+                file_path = os.path.join(failed_dir, filename)
+                all_failed_files.append(("failed_dir", file_path, filename))
+    
+    # Collect files with error markers
+    for filename in error_files:
+        file_path = os.path.join(output_dir, filename)
+        all_failed_files.append(("error_marker", file_path, filename))
+    
+    if not all_failed_files:
+        print("No failed files found.")
+        return
+        
+    # Display files
+    print("\nFailed Files:")
+    print(f"{'#':<4} {'Type':<15} {'Filename':<50}")
+    print("-" * 70)
+    
+    for idx, (fail_type, file_path, filename) in enumerate(all_failed_files, 1):
+        type_display = "Failed Directory" if fail_type == "failed_dir" else "Error Marker"
+        # Truncate filename if too long
+        if len(filename) > 46:
+            display_name = filename[:43] + "..."
+        else:
+            display_name = filename
+        print(f"{idx:<4} {type_display:<15} {display_name:<50}")
+    
+    # Ask which file to view
+    try:
+        choice = input("\nEnter number to view file details (or 0 to return): ")
+        if choice.isdigit() and 1 <= int(choice) <= len(all_failed_files):
+            selected_idx = int(choice) - 1
+            _, selected_file, _ = all_failed_files[selected_idx]
+            view_file_details(selected_file)
+    except:
+        pass
+
+def view_file_details(file_path):
+    """Show detailed analysis of a file including start/end markers and content."""
+    if not os.path.exists(file_path):
+        print(f"File not found: {file_path}")
+        return
+        
+    print(f"\n=== File Analysis: {os.path.basename(file_path)} ===")
+    
+    try:
+        # File stats
+        file_size = os.path.getsize(file_path)
+        mod_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+        
+        print(f"Path: {file_path}")
+        print(f"Size: {file_size:,} bytes")
+        print(f"Last Modified: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Analyze the content
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            # Get first line (should be start marker)
+            first_line = f.readline().strip()
+            
+            # Check if it's a start marker
+            if first_line.startswith("META_BATCH_START_NOTE_ID:"):
+                print(f"\nStart Marker: {first_line}")
+                original_filename = first_line.replace("META_BATCH_START_NOTE_ID:", "")
+                print(f"Original Filename: {original_filename}")
+            else:
+                print(f"\nFirst Line (not a start marker): {first_line}")
+            
+            # Check for CSV header
+            second_line = f.readline().strip()
+            if second_line.startswith('"CUI"') or 'CUI' in second_line:
+                print("CSV Header: Present")
+            else:
+                print(f"Second Line (not a CSV header): {second_line}")
+            
+            # Count the number of data rows
+            content = f.read()
+            data_rows = content.count('\n') + (0 if content.endswith('\n') else 1)
+            
+            # Check for end marker
+            has_end_marker = False
+            has_error_marker = False
+            
+            # Check the last 200 bytes for end marker
+            f.seek(0, os.SEEK_END)
+            pos = f.tell()
+            last_chars = min(200, pos)
+            f.seek(pos - last_chars)
+            last_content = f.read(last_chars)
+            
+            for line in reversed(last_content.splitlines()):
+                if line.startswith("META_BATCH_END_NOTE_ID:"):
+                    has_end_marker = True
+                    if ":ERROR" in line:
+                        has_error_marker = True
+                    print(f"End Marker: {line}")
+                    break
+            
+            if not has_end_marker:
+                print("End Marker: Not found (file may be incomplete)")
+            
+            print(f"\nData rows: {data_rows}")
+            
+            # Analyze potential errors
+            if has_error_marker:
+                print("\n=== ERROR ANALYSIS ===")
+                print("File contains an error marker. This indicates:")
+                print("- MetaMap completed but encountered an error")
+                print("- This could be a timeout, parsing error, or other issue")
+                print("- The file may or may not contain valid concepts")
+                
+                # See if there's a hint about the error in the log
+                log_filename = get_dynamic_log_filename(os.path.dirname(file_path))
+                log_path = os.path.join(os.path.dirname(file_path), log_filename)
+                
+                if os.path.exists(log_path):
+                    original_name = os.path.basename(file_path).replace(".csv", "")
+                    print(f"\nSearching log for errors related to {original_name}...")
+                    
+                    try:
+                        with open(log_path, 'r', encoding='utf-8', errors='replace') as log_f:
+                            log_content = log_f.read()
+                            # Find error messages related to this file
+                            error_lines = []
+                            for line in log_content.splitlines():
+                                if "ERROR" in line and original_name in line:
+                                    error_lines.append(line)
+                            
+                            if error_lines:
+                                print("Found relevant error messages:")
+                                for err_line in error_lines[-3:]:  # Show last 3 errors
+                                    print(f"  {err_line}")
+                            else:
+                                print("No specific error messages found for this file.")
+                    except Exception as e:
+                        print(f"Error reading log file: {e}")
+            
+            # Display content snippets
+            print("\n=== CONTENT SNIPPETS ===")
+            
+            # Reset file pointer to beginning
+            f.seek(0)
+            
+            # Show first 10 lines
+            print("\nFirst 10 lines:")
+            for i, line in enumerate(f, 1):
+                print(f"{i}: {line.strip()}")
+                if i >= 10:
+                    break
+            
+            # Show content from the middle of the file (if large enough)
+            if data_rows > 20:
+                middle_pos = max(file_size // 2, 10)
+                f.seek(middle_pos)
+                # Skip to next line boundary
+                f.readline()
+                
+                print("\nSnippet from middle of file:")
+                for i in range(5):
+                    line = f.readline()
+                    if not line:
+                        break
+                    print(f"M{i+1}: {line.strip()}")
+            
+            # Show last 5 lines (excluding the end marker)
+            print("\nLast 5 data lines (excluding end marker):")
+            f.seek(0, os.SEEK_END)
+            pos = f.tell()
+            
+            # Read last 1000 chars to extract last lines
+            last_chars = min(1000, pos)
+            f.seek(pos - last_chars)
+            last_chunk = f.read(last_chars)
+            
+            last_lines = last_chunk.splitlines()
+            # Filter out the end marker
+            data_lines = [line for line in last_lines if not line.startswith("META_BATCH_END_NOTE_ID:")]
+            
+            for i, line in enumerate(data_lines[-5:]):
+                print(f"L{i+1}: {line}")
+        
+        # Option to view corresponding input file
+        if first_line.startswith("META_BATCH_START_NOTE_ID:"):
+            input_filename = first_line.replace("META_BATCH_START_NOTE_ID:", "")
+            default_input_dir = get_config_value("default_input_dir", "./input_notes")
+            input_path = os.path.join(default_input_dir, input_filename)
+            
+            if os.path.exists(input_path):
+                print(f"\nCorresponding input file found: {input_path}")
+                if input("\nView input file? (y/n): ").strip().lower() == 'y':
+                    view_input_file(input_path)
+            else:
+                print(f"\nCorresponding input file not found: {input_path}")
+        
+        # Offer to retry processing the file
+        print("\n=== OPTIONS ===")
+        choice = input("Would you like to retry processing this file? (y/n): ").strip().lower()
+        if choice == 'y':
+            original_filename = first_line.replace("META_BATCH_START_NOTE_ID:", "")
+            retry_file_processing(original_filename)
+            
+    except Exception as e:
+        print(f"Error analyzing file: {e}")
+        import traceback
+        traceback.print_exc()
+
+def view_input_file(input_path):
+    """Display the content of an input text file."""
+    if not os.path.exists(input_path):
+        print(f"File not found: {input_path}")
+        return
+        
+    print(f"\n=== Input File: {os.path.basename(input_path)} ===")
+    print(f"Size: {os.path.getsize(input_path):,} bytes")
+    
+    try:
+        with open(input_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+            
+            # Get statistics
+            line_count = content.count('\n') + (0 if content.endswith('\n') else 1)
+            word_count = len(content.split())
+            
+            print(f"Lines: {line_count} | Words: {word_count}")
+            
+            # Display beginning of file
+            print("\n--- Beginning of file ---")
+            lines = content.splitlines()
+            for i, line in enumerate(lines[:15]):
+                print(f"{i+1}: {line[:100]}")
+                if len(line) > 100:
+                    print("   ...")
+                    
+            if len(lines) > 30:
+                print("\n... (content truncated) ...")
+                
+                # Display end of file
+                print("\n--- End of file ---")
+                for i, line in enumerate(lines[-5:]):
+                    print(f"{line_count-5+i+1}: {line[:100]}")
+                    if len(line) > 100:
+                        print("   ...")
+    except Exception as e:
+        print(f"Error reading input file: {e}")
+
+def retry_file_processing(original_filename):
+    """Retry processing a specific file with MetaMap."""
+    # Get paths
+    default_input_dir = get_config_value("default_input_dir", "./input_notes")
+    default_output_dir = get_config_value("default_output_dir", "./output_csvs")
+    input_path = os.path.join(default_input_dir, original_filename)
+    output_csv_path = derive_output_csv_path(default_output_dir, original_filename)
+    
+    # Check if the input file exists
+    if not os.path.exists(input_path):
+        print(f"Error: Input file not found: {input_path}")
+        return
+    
+    # Ask for an increased timeout
+    default_timeout = int(get_config_value("pymm_timeout", str(DEFAULT_PYMM_TIMEOUT)))
+    try:
+        new_timeout = input(f"Enter timeout in seconds (default: {default_timeout * 2}, original: {default_timeout}): ")
+        if new_timeout.strip() and new_timeout.isdigit():
+            timeout = int(new_timeout)
+        else:
+            timeout = default_timeout * 2  # Double the default timeout for retries
+    except:
+        timeout = default_timeout * 2
+    
+    # Check for any existing output file
+    if os.path.exists(output_csv_path):
+        backup_path = output_csv_path + f".bak.{int(time.time())}"
+        try:
+            shutil.copy2(output_csv_path, backup_path)
+            print(f"Existing output file backed up to: {os.path.basename(backup_path)}")
+            os.remove(output_csv_path)
+        except Exception as e:
+            print(f"Warning: Failed to backup/remove existing output file: {e}")
+    
+    print(f"\nProcessing file: {original_filename}")
+    print(f"Input: {input_path}")
+    print(f"Output: {output_csv_path}")
+    print(f"Timeout: {timeout} seconds")
+    
+    # Initialize PyMetaMap
+    try:
+        metamap_binary_path = get_config_value("metamap_binary_path")
+        if not metamap_binary_path:
+            print("Error: MetaMap binary path not configured")
+            return
+            
+        print("Initializing PyMetaMap...")
+        from pymm import Metamap as PyMetaMap
+        mm = PyMetaMap(metamap_binary_path, debug=True)
+        
+        # Read the input file
+        with open(input_path, 'r', encoding='utf-8') as f_in:
+            whole_note = f_in.read().strip()
+        
+        if not whole_note:
+            print("Input file is empty. Skipping.")
+            return
+            
+        lines = [whole_note]
+        
+        print(f"Processing with timeout {timeout}s...")
+        start_time = time.time()
+        
+        # Process the file
+        mmos_iter = mm.parse(lines, timeout=timeout)
+        
+        # Check for empty result
+        if not mmos_iter or (hasattr(mmos_iter, '__len__') and len(mmos_iter) == 0):
+            print("Warning: No concepts found or XML parsing error")
+            # Write a valid CSV file with just the headers
+            with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
+                f_out.write(f"{START_MARKER_PREFIX}{original_filename}\n")
+                writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
+                writer.writerow(CSV_HEADER)
+                f_out.write(f"{END_MARKER_PREFIX}{original_filename}:ERROR\n")
+            print("Created empty output CSV with error marker")
+            return
+                
+        # Extract concepts and write to CSV
+        concepts_list = [concept for mmo_item in mmos_iter for concept in mmo_item]
+        print(f"Found {len(concepts_list)} concepts")
+        
+        with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
+            f_out.write(f"{START_MARKER_PREFIX}{original_filename}\n")
+            writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
+            writer.writerow(CSV_HEADER)
+            
+            # Process concepts (simplified version)
+            if concepts_list:
+                for concept in concepts_list:
+                    try:
+                        if not concept.ismapping:
+                            continue
+                            
+                        concept_name = getattr(concept, 'concept_name', getattr(concept, 'preferred_name', concept.matched))
+                        pref_name = getattr(concept, 'preferred_name', concept_name)
+                        phrase_text = getattr(concept, 'phrase_text', None) or getattr(concept, 'phrase', None) or getattr(concept, 'matched', '')
+                        sem_types_formatted = ":".join(concept.semtypes) if getattr(concept, 'semtypes', None) else ""
+                        sources_formatted = "|".join(concept.sources) if getattr(concept, 'sources', None) else ""
+                        
+                        # Get position value (simplified)
+                        position_value = ""
+                        if concept.pos_start is not None and concept.pos_length is not None:
+                            position_value = f"{concept.pos_start}:{concept.pos_length}"
+                        elif concept.phrase_start is not None and concept.phrase_length is not None:
+                            position_value = f"{concept.phrase_start}:{concept.phrase_length}"
+                        
+                        row_data = [
+                            concept.cui,
+                            concept.score,
+                            concept_name,
+                            pref_name,
+                            phrase_text,
+                            sem_types_formatted,
+                            sources_formatted,
+                            position_value,
+                        ]
+                        writer.writerow([pymm_escape_csv_field(field) for field in row_data])
+                    except Exception as e_concept:
+                        print(f"Error processing concept: {e_concept}")
+            
+            # Write end marker with success
+            f_out.write(f"{END_MARKER_PREFIX}{original_filename}\n")
+        
+        end_time = time.time()
+        duration = end_time - start_time
+        print(f"File processed successfully in {duration:.2f} seconds")
+        print(f"Output written to: {output_csv_path}")
+        
+    except Exception as e:
+        print(f"Error processing file: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        # Write error marker if possible
+        try:
+            with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
+                f_out.write(f"{START_MARKER_PREFIX}{original_filename}\n")
+                writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
+                writer.writerow(CSV_HEADER)
+                f_out.write(f"{END_MARKER_PREFIX}{original_filename}:ERROR\n")
+            print("Created output CSV with error marker")
+        except:
+            pass
+    finally:
+        # Clean up
+        if 'mm' in locals():
+            try:
+                mm.close()
+            except:
+                pass
 
 if __name__ == "__main__":
     import multiprocessing as _mp
