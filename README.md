@@ -10,28 +10,78 @@ This repository bundles a lightweight Python wrapper around the MetaMap 2020 bin
 
 ## Installation (3-step quick start)
 
-```bash
-# 1.  Install Python dependencies (editable mode shown here)
-pip install -e .
+### Method 1: Install from PyPI (Recommended)
 
-# 2.  One-click MetaMap install (downloads ~1 GB, compiles, config saved)
+```bash
+# 1. Install the package directly from PyPI
+pip install -i https://test.pypi.org/simple/ pythonmetamap==0.3.0
+
+# 2. One-click MetaMap install (downloads ~1 GB, compiles, config saved)
 pymm-cli install
 
-# 3.  Launch the interactive menu and follow the prompts
+# 3. Launch the interactive menu and follow the prompts
 pymm-cli
 ```
 
-Behind the scenes, step 2 downloads the MetaMap 2020 source code into `metamap_install/`, runs its `install.sh`, and records the resulting binary path inside `~/.pymm_controller_config.json`.  No environment variables are required.
+### Method 2: Install from Source (Development)
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/editnori/PythonMetaMap.git
+cd PythonMetaMap
+
+# 2. Install Python dependencies in editable mode
+pip install -e .
+
+# 3. One-click MetaMap install (downloads ~1 GB, compiles, config saved)
+pymm-cli install
+
+# 4. Launch the interactive menu and follow the prompts
+pymm-cli
+```
+
+Behind the scenes, the installation step downloads the MetaMap 2020 source code into `metamap_install/`, runs its `install.sh`, and records the resulting binary path inside `~/.pymm_controller_config.json`.  No environment variables are required.
 
 ## Command Line Usage (non-interactive)
 
 Process a directory of `.txt` files and create `.csv` outputs:
 
 ```bash
-pymm-cli <input_dir> <output_dir>
+pymm-cli start <input_dir> <output_dir>
 ```
 
 The tool writes progress to `<output_dir>/.mimic_state.json`; interrupted runs can be resumed automatically. CSV output is written safely using Python's `csv` module.
+
+## New Quality-of-Life Features (v0.3.0)
+
+The latest version includes significant improvements to the user interface:
+
+### Enhanced Dashboard
+- Real-time CPU and RAM monitoring for each worker process
+- Trend tracking with up/down arrows for resource usage
+- Color-coded CPU usage warnings
+- Detailed progress bar visualization
+- Clear status indicators
+
+### Improved File Management
+- Detailed file analysis with statistics
+- View both input and output files
+- Pagination for browsing large file collections
+- Error analysis for failed files with log inspection
+- Comprehensive file search capabilities
+
+### Better Batch Progress Display
+- Clear status indicators: [RUNNING], [COMPLETED], [FAILED]
+- Detailed statistics (total, completed, failed, retries)
+- ASCII progress bar visualization
+- Improved time estimation with hours/minutes/seconds format
+
+### Retry Failed Files Option
+- Dedicated menu option for retrying failed files
+- Automatic detection of files that failed processing
+- Option to set increased timeout for problematic files
+- Batch processing with detailed feedback
+- Automatic cleanup of failed files after successful retry
 
 ## Library Example
 
@@ -61,6 +111,7 @@ This project is maintained by **Dr. Layth Qassem** and takes inspiration from th
 *   State management for resuming interrupted batch jobs.
 *   Command-line interface for starting, resuming, and monitoring batch jobs.
 *   Configurable MetaMap processing options.
+*   Advanced file management and retry capabilities.
 
 ## Prerequisites
 
@@ -76,91 +127,63 @@ That's it – MetaMap itself is downloaded and compiled for you via `pymm-cli in
 * `metamap_processing_options` – command-line flags passed to MetaMap (default covers most use-cases)
 * `max_parallel_workers` – override auto-detected worker count
 * `default_input_dir`, `default_output_dir` – convenience paths pre-filled in menus
+* `pymm_timeout` - timeout (in seconds) for each MetaMap file processing
+* `java_heap_size` - control memory allocation for MetaMap's Java process
 
 Edit via the interactive "Configure Settings" option or manually with a text editor.
 
 ## Setup and Installation
 
-1.  **Clone the Repository:**
+1.  **Install from PyPI:**
     ```bash
-    git clone <your-repository-url> # Replace <your-repository-url> with the actual URL
-    cd PythonMetaMap 
+    pip install -i https://test.pypi.org/simple/ pythonmetamap==0.3.0
     ```
 
-2.  **Create a Virtual Environment (Recommended):**
+2.  **Install MetaMap:**
     ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
+    pymm-cli install
     ```
 
-3.  **Install Dependencies:**
-    Install the Python package in editable mode:
-    ```bash
-    python -m pip install -e .
-    ```
+3.  **Environment Variables (Optional):**
+    The following environment variables can be used to configure the controller, though the interactive configuration is preferred:
 
-4.  **Environment Variables:**
-    Configure the following environment variables before running the controller:
-
-    *   `METAMAP_BINARY_PATH`: (Required) The absolute path to your MetaMap executable (e.g., `/opt/public_mm/bin/metamap` or `/mnt/c/MetaMap/public_mm/bin/metamap` if using WSL from Windows).
-    *   `METAMAP_PROCESSING_OPTIONS`: (Optional) A string of command-line options to pass to the MetaMap binary for each invocation.
-        *   Example: `"-y -Z 2020AA --lexicon db --word_sense_disambiguation"`
-        *   If not set, the system uses a default set of options defined in `src/pymm/cmdexecutor.py`.
-    *   `MAX_PARALLEL_WORKERS`: (Optional) Number of parallel worker processes. Auto-detected from CPU cores if omitted.
-    *   `PYMM_TIMEOUT`: (Optional) Timeout (seconds) for each MetaMap call. Defaults to 120.
+    *   `METAMAP_BINARY_PATH`: The absolute path to your MetaMap executable
+    *   `METAMAP_PROCESSING_OPTIONS`: A string of command-line options to pass to the MetaMap binary
+    *   `MAX_PARALLEL_WORKERS`: Number of parallel worker processes
+    *   `PYMM_TIMEOUT`: Timeout (seconds) for each MetaMap call (default: 300)
+    *   `JAVA_HEAP_SIZE`: Memory allocation for Java (e.g., "4g", "16g")
 
     **Note on MetaMap Servers (WSD, SKR/MedPost):**
     If your MetaMap options require support servers you can start/stop them from the **interactive menu → "Manage MetaMap Servers"** – no manual shell commands needed.
 
 ## Usage
 
-The main script for orchestration is `mimic_controller.py`. After installation (`python -m pip install -e .`), you can also use `pymm-cli` as a shortcut.
+**Using the Interactive CLI:**
+```bash
+pymm-cli
+```
+This brings up the menu with all available options.
 
 **Starting a New Batch Job:**
 ```bash
-python mimic_controller.py start <input_directory> <output_directory>
-# OR using the installed CLI script:
 pymm-cli start <input_directory> <output_directory>
 ```
-*   `<input_directory>`: Path to the directory containing your input `.txt` files.
-*   `<output_directory>`: Path to the directory where output `.csv` files and state information will be stored. This directory will be created if it doesn't exist.
+*   `<input_directory>`: Path to the directory containing your input `.txt` files
+*   `<output_directory>`: Path to the directory where output `.csv` files and state information will be stored
 
 **Resuming an Interrupted Batch Job:**
 ```bash
-python mimic_controller.py resume <input_directory> <output_directory>
-# OR
 pymm-cli resume <input_directory> <output_directory>
 ```
 
 **Other Subcommands:**
-Both `python mimic_controller.py <subcommand> ...` and `pymm-cli <subcommand> ...` can be used.
-*   `validate INPUT_DIR`: Validates input files for encoding issues.
-*   `progress OUTPUT_DIR`: Shows the progress of the current or last job in `OUTPUT_DIR`.
-*   `pid OUTPUT_DIR`: Shows the PID of the running controller for `OUTPUT_DIR`.
-*   `kill OUTPUT_DIR`: Sends a SIGTERM signal to the controller process for `OUTPUT_DIR`.
-*   `tail OUTPUT_DIR [LINES]`: Tails the log file in `OUTPUT_DIR`.
-*   `pending INPUT_DIR OUTPUT_DIR`: Lists input files that are not yet successfully processed.
-*   `completed OUTPUT_DIR`: Lists output CSV files that are confirmed complete by markers.
-*   `sample OUTPUT_DIR [N]`: Shows a sample of N completed output files.
-*   `clearout OUTPUT_DIR`: Deletes all `*.csv` output files from `OUTPUT_DIR` (keeps logs and state).
-*   `badcsv OUTPUT_DIR`: Lists CSVs that might be incomplete (e.g., header only).
-
-**Example Workflow:**
-
-1.  Ensure MetaMap is installed and accessible.
-2.  Set environment variables (`METAMAP_BINARY_PATH`, etc.).
-3.  If needed, start MetaMap support servers (WSD, SKR/MedPost).
-4.  Prepare your input text files in a directory (e.g., `my_notes/`).
-5.  Create an output directory (e.g., `my_results/`).
-6.  Start processing:
-    ```bash
-    python mimic_controller.py start my_notes/ my_results/
-    ```
-7.  Monitor progress:
-    ```bash
-    python mimic_controller.py progress my_results/
-    ```
-8.  Once finished, if you started MetaMap support servers, stop them.
+*   `validate INPUT_DIR`: Validates input files for encoding issues
+*   `progress OUTPUT_DIR`: Shows the progress of the current or last job
+*   `pid OUTPUT_DIR`: Shows the PID of the running controller process
+*   `kill OUTPUT_DIR`: Sends a SIGTERM signal to the controller process
+*   `tail OUTPUT_DIR [LINES]`: Tails the log file in the output directory
+*   `killall`: Terminates all running MetaMap processes
+*   `clearout OUTPUT_DIR`: Deletes all output files to start fresh
 
 ## Output Format
 
@@ -172,27 +195,17 @@ For each input `.txt` file, a corresponding `.csv` file will be generated in the
 *   `Phrase`: The text phrase matched by MetaMap
 *   `SemTypes`: Semantic Types (colon-separated)
 *   `Sources`: UMLS Source Vocabularies (pipe-separated)
-*   `Positions`: Positional information (e.g., `start:length`) within the utterance/document.
-
-## Development Notes
-
-*   The core MetaMap interaction logic is in `src/pymm/`.
-*   `mmoparser.py` handles parsing the XML output from MetaMap.
-*   `cmdexecutor.py` constructs and runs the MetaMap command.
-*   `pymm.py` is the main wrapper class used by the controller.
-*   `mimic_controller.py` orchestrates the batch processing.
-
-This project aims to improve upon existing MetaMap wrappers by providing better orchestration, error handling, and richer data extraction for parallel processing workflows – **all from a single Python CLI (`pymm-cli`)**.  No external shell scripts are required.
+*   `Position`: Positional information (e.g., `start:length`) within the utterance/document
 
 ## Quick-Start (One-Liner)
 
-If you are new to MetaMap and just want to get going, run the following from the project root after installing Python dependencies:
+If you are new to MetaMap and just want to get going, run the following after installing the package:
 
 ```bash
 pymm-cli install && pymm-cli
 ```
 
-The `install` sub-command will download and compile MetaMap 2020 under `metamap_install/` and automatically save the discovered binary path to the local configuration file in your home directory.  Once installation finishes, simply run `pymm-cli` to open the **built-in interactive menu** where you can configure defaults, start/stop servers, and kick off batch jobs with a few keystrokes.
+The `install` sub-command will download and compile MetaMap 2020 under `metamap_install/` and automatically save the discovered binary path to the local configuration file in your home directory. Once installation finishes, the interactive menu will open where you can configure defaults, start/stop servers, and kick off batch jobs with a few keystrokes.
 
 ## Using a custom download mirror
 
@@ -205,18 +218,20 @@ pymm-cli install   # will fetch from your mirror instead of GitHub
 
 Leave the variable in your shell profile (e.g., `.bashrc`) to make subsequent `pymm-cli install` calls idempotent and offline-friendly.
 
-## 2025 Update – server-less batch, background mode, live dashboard
+## 2025 Update – Server-less batch, background mode, live dashboard
 
-* **Server-less by default:** the controller no longer tries to start MetaMap's Tagger/WSD/mmserver20.  Your jobs run fine without Java services; starting them manually is optional.
-* **Background batch launch:** when you choose "Run MetaMap Batch Processing" in the interactive menu, the job is now started in a detached process (`nohup` / Windows-detached).  You can safely close the terminal; PID is written to `.mimic_pid` and logs stream to `<output_dir>/mimic_controller.log`.
-* **Live Monitor Dashboard:** interactive menu option 3 opens a real-time dashboard that refreshes every two seconds, showing CPU/RAM, progress, and active workers.
-* **Better logging:** each batch automatically creates/attaches a file handler so you can `tail -f` the log while the job is running.
+* **Server-less by default:** The controller no longer tries to start MetaMap's Tagger/WSD/mmserver20. Your jobs run fine without Java services; starting them manually is optional.
+* **Background batch launch:** When you choose "Run MetaMap Batch Processing" in the interactive menu, the job is started in a detached process. You can safely close the terminal; PID is written to `.mimic_pid` and logs stream to `<output_dir>/mimic_controller.log`.
+* **Live Monitor Dashboard:** Interactive menu option 3 opens a real-time dashboard that refreshes every two seconds, showing CPU/RAM, progress, and active workers.
+* **Better logging:** Each batch automatically creates/attaches a file handler so you can `tail -f` the log while the job is running.
+* **Failed files handling:** Problematic files are moved to a special directory for easy retry with increased timeouts.
+* **File inspection:** Detailed file analysis and viewing capabilities for both input and output files.
 
 These improvements mean you can kick off a long run, shut your laptop lid, and come back later—all from pure Python.
 
 ## Architecture – Python Wrapper vs. Java API
 
-Below is a **side-by-side** view of the two batch pipelines that ship with this repository.  Both reach the same goal (map free-text to UMLS CUIs) but they differ in *where* the heavy-lifting happens and *what* is returned to the caller.
+Below is a **side-by-side** view of the two batch pipelines that ship with this repository. Both reach the same goal (map free-text to UMLS CUIs) but they differ in *where* the heavy-lifting happens and *what* is returned to the caller.
 
 ```text
             ┌────────────────────┐                         ┌────────────────────┐
@@ -256,8 +271,8 @@ Below is a **side-by-side** view of the two batch pipelines that ship with this 
 Key differences:
 
 1. **Process isolation** – The Python path launches the *metamap* binary as a
-   *sub-process* per worker which keeps the JVM out of the equation.  The Java
-   path embeds the native code inside the same JVM.  For long-running servers
+   *sub-process* per worker which keeps the JVM out of the equation. The Java
+   path embeds the native code inside the same JVM. For long-running servers
    the latter has lower per-call overhead, but restarting a wedged MetaMap is
    simpler on the Python side (just kill the process).
 
@@ -266,16 +281,16 @@ Key differences:
    crashes as `IOException`/`UnsatisfiedLinkError` which bubble up the stack.
 
 3. **Resource usage** – The Python model scales well on multi-core machines by
-   forking multiple workers (avoids the GIL thanks to `multiprocessing`).  The
+   forking multiple workers (avoids the GIL thanks to `multiprocessing`). The
    Java route enjoys *in-process* JNI calls but must share a single JVM heap.
 
 4. **Portability** – Python orchestration runs anywhere the MetaMap *binary*
-   runs (Linux, WSL, macOS).  The Java code needs a compatible JDK and may need
+   runs (Linux, WSL, macOS). The Java code needs a compatible JDK and may need
    `jna` work-arounds on Alpine, containers, etc.
 
 ### Why not JSON?
 
-MetaMap 2020's most structured output format is still **XML** (`--XMLf#`).  It
+MetaMap 2020's most structured output format is still **XML** (`--XMLf#`). It
 is verbose but:
 
 * Maintains strict ordering and nesting that mirrors the Java object model.
@@ -283,9 +298,9 @@ is verbose but:
   attributes in one shot.
 
 An experimental *JSON* fielded output exists in *MetaMapLite* but it is missing
-several tags (e.g. `PositionalInfo`).  Until the upstream project standardises
+several tags (e.g. `PositionalInfo`). Until the upstream project standardises
 on JSON we keep XML as the canonical interchange format and convert down-stream
-(via `mmoparser.py`) to Python objects.  The overhead is negligible compared to
+(via `mmoparser.py`) to Python objects. The overhead is negligible compared to
 MetaMap's own runtime.
 
 ### Choosing between the two pipelines
