@@ -52,7 +52,7 @@ pymm-cli start <input_dir> <output_dir>
 
 The tool writes progress to `<output_dir>/.mimic_state.json`; interrupted runs can be resumed automatically. CSV output is written safely using Python's `csv` module.
 
-## New Quality-of-Life Features (v0.3.0)
+## New Quality-of-Life Features (v0.4.0)
 
 The latest version includes significant improvements to the user interface:
 
@@ -62,6 +62,9 @@ The latest version includes significant improvements to the user interface:
 - Color-coded CPU usage warnings
 - Detailed progress bar visualization
 - Clear status indicators
+- **NEW: Performance metrics view with throughput analysis**
+- **NEW: Pause/resume functionality to stop auto-scrolling (press 'p')**
+- **NEW: Multiple view modes with keyboard shortcuts (s: summary, w: workers, f: files, t: stats)**
 
 ### Improved File Management
 - Detailed file analysis with statistics
@@ -69,12 +72,16 @@ The latest version includes significant improvements to the user interface:
 - Pagination for browsing large file collections
 - Error analysis for failed files with log inspection
 - Comprehensive file search capabilities
+- **NEW: Automatic dependency checking and installation**
+- **NEW: Enhanced file snippets for better content preview**
 
 ### Better Batch Progress Display
 - Clear status indicators: [RUNNING], [COMPLETED], [FAILED]
 - Detailed statistics (total, completed, failed, retries)
 - ASCII progress bar visualization
 - Improved time estimation with hours/minutes/seconds format
+- **NEW: Advanced performance metrics (throughput per hour, estimated completion time)**
+- **NEW: Memory usage tracking for processing optimization**
 
 ### Retry Failed Files Option
 - Dedicated menu option for retrying failed files
@@ -82,6 +89,8 @@ The latest version includes significant improvements to the user interface:
 - Option to set increased timeout for problematic files
 - Batch processing with detailed feedback
 - Automatic cleanup of failed files after successful retry
+- **NEW: Automatic nohup background mode for retries on Unix systems**
+- **NEW: Unique batch IDs for better tracking of retry operations**
 
 ## Library Example
 
