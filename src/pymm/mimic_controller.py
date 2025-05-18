@@ -29,6 +29,7 @@ import re
 from pathlib import Path
 import csv
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import shlex
 
 # --- Configuration File Handling & Constants ---
 CONFIG_FILE_NAME = ".pymm_controller_config.json"
@@ -784,31 +785,53 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
         logging.error(f"[{worker_id}] PyMetaMap class not loaded! Cannot initialize MetaMap. This worker will fail.")
         for f_path in files_for_worker: results.append((os.path.basename(f_path), "0ms", True))
         return results
+    
+    # Prepare environment variables once for the entire worker
     try:
         # Ensure worker respects specific MetaMap options
+        original_env = os.environ.copy()
         if current_metamap_options:
-            os.environ["METAMAP_PROCESSING_OPTIONS"] = current_metamap_options
+            # Deduplicate options like --lexicon db to avoid "overridden" warning
+            os.environ["METAMAP_PROCESSING_OPTIONS"] = deduplicate_metamap_options(current_metamap_options)
             
         # Set Java heap size if configured
         java_heap_size = get_config_value("java_heap_size", os.getenv("JAVA_HEAP_SIZE", DEFAULT_JAVA_HEAP_SIZE))
         if java_heap_size:
             os.environ["JAVA_HEAP_SIZE"] = java_heap_size
             logging.info(f"[{worker_id}] Setting Java heap size to {java_heap_size}")
-            
-        mm = PyMetaMap(current_metamap_binary_path, debug=True)
     except Exception as e:
-        logging.error(f"[{worker_id}] Failed to initialize PyMetaMap with binary '{current_metamap_binary_path}': {e}")
-        for f_path in files_for_worker: results.append((os.path.basename(f_path), "0ms", True))
-        return results
+        logging.error(f"[{worker_id}] Failed to set environment variables: {e}")
+    
+    mm = None
     
     for input_file_path_str in files_for_worker:
         input_file_basename = os.path.basename(input_file_path_str)
         output_csv_path = derive_output_csv_path(main_out_dir, input_file_basename)
         processing_error_occurred = False; duration_ms = 0
         start_time = time.time()
+        
         try:
-            with open(input_file_path_str, 'r', encoding='utf-8') as f_in: whole_note = f_in.read().strip()
+            # Close previous MetaMap instance if exists to ensure clean state
+            if mm is not None:
+                try:
+                    mm.close()
+                except Exception as e_close:
+                    logging.warning(f"[{worker_id}] Error closing previous MetaMap instance: {e_close}")
+                mm = None
+            
+            # Create a fresh MetaMap instance for each file
+            try:
+                mm = PyMetaMap(current_metamap_binary_path, debug=True)
+                logging.info(f"[{worker_id}] Created new MetaMap instance for {input_file_basename}")
+            except Exception as e_mm:
+                logging.error(f"[{worker_id}] Failed to initialize PyMetaMap for '{input_file_basename}': {e_mm}")
+                processing_error_occurred = True
+                continue
+            
+            with open(input_file_path_str, 'r', encoding='utf-8') as f_in: 
+                whole_note = f_in.read().strip()
             lines = [whole_note] if whole_note else []
+            
             if not lines:
                 logging.info(f"[{worker_id}] Input file {input_file_basename} is empty. Skipping.")
                 results.append((input_file_basename, "0ms", False))
@@ -819,6 +842,7 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                 continue
             
             pymm_timeout = int(get_config_value("pymm_timeout", os.getenv("PYMM_TIMEOUT", str(DEFAULT_PYMM_TIMEOUT))))
+            logging.info(f"[{worker_id}] Processing {input_file_basename} with timeout {pymm_timeout}s")
             mmos_iter = mm.parse(lines, timeout=pymm_timeout)
             
             # Check if we received an empty result due to XML parsing error
@@ -833,6 +857,7 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                 continue
                 
             concepts_list = [concept for mmo_item in mmos_iter for concept in mmo_item]
+            logging.info(f"[{worker_id}] Found {len(concepts_list)} concepts in {input_file_basename}")
 
             with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
                 f_out.write(f"{START_MARKER_PREFIX}{input_file_basename}\n")
@@ -861,7 +886,7 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                         concepts_in_utterance = sorted(concepts_by_utterance[utterance_id], key=lambda pair: pair[0])
                         concepts_to_write.extend(pair[1] for pair in concepts_in_utterance)
                     
-                    # logging.debug(f"[{worker_id}] Processed {len(concepts_to_write)} concepts in {len(concepts_by_utterance)} utterances for {input_file_basename}.")
+                    logging.debug(f"[{worker_id}] Processed {len(concepts_to_write)} concepts in {len(concepts_by_utterance)} utterances for {input_file_basename}.")
                     utterance_texts = {}; utterance_offset_map = {}
                     if whole_note: # Only build if there's text
                         utterance_splits = re.split(r'\n\s*\n', whole_note)
@@ -963,7 +988,7 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                             writer.writerow([pymm_escape_csv_field(field) for field in row_data])
                         except Exception as e_concept:
                             logging.error(f"[{worker_id}] Error processing/writing concept for {input_file_basename}: {e_concept} - Concept: {concept}")
-                            processing_error_occurred = True 
+                            processing_error_occurred = True
         except Exception as e_file:
             logging.error(f"[{worker_id}] Error processing file {input_file_path_str} or writing to {output_csv_path}: {e_file}")
             logging.exception("Traceback for file processing error:")
@@ -984,9 +1009,49 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                 logging.error(f"[{worker_id}] Failed to write END_MARKER for {input_file_basename}: {e_marker}")
                 processing_error_occurred = True
             results.append((input_file_basename, f"{duration_ms}ms", processing_error_occurred))
-    if 'mm' in locals() and mm: mm.close()
+    
+    # Clean up final MetaMap instance
+    if mm is not None:
+        try:
+            mm.close()
+        except Exception:
+            pass
+    
     logging.info(f"[{worker_id}] Finished processing batch of {len(files_for_worker)} files.")
     return results
+
+def deduplicate_metamap_options(options_str):
+    """Remove duplicate options like --lexicon db to avoid 'overridden' warnings"""
+    options = shlex.split(options_str)
+    result = []
+    skip_next = False
+    seen_options = set()
+    
+    for i, opt in enumerate(options):
+        if skip_next:
+            skip_next = False
+            continue
+            
+        # Handle option-argument pairs
+        if opt == "--lexicon" or opt == "-Z" or opt == "--year":
+            # If we've seen this option before, skip it and its argument
+            if opt in seen_options:
+                if i+1 < len(options):  # Make sure there's an argument to skip
+                    skip_next = True
+                continue
+            seen_options.add(opt)
+            result.append(opt)
+            # Add the argument too
+            if i+1 < len(options):
+                result.append(options[i+1])
+                skip_next = True
+        else:
+            # For standalone options
+            if opt not in seen_options:
+                seen_options.add(opt)
+                result.append(opt)
+    
+    return " ".join(result)
 
 # --- Path Normalization Helper ---
 def _normalize_path_for_os(path_str):
