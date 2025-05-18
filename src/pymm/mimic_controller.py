@@ -585,42 +585,61 @@ def save_state(out_dir, state):
 def gather_inputs(inp_dir): 
     return sorted([p for p in rglob_compat(inp_dir, "*.txt")])
 
-def check_output_file_completion(output_csv_path, input_file_original_stem_for_marker):
-    """Checks if an output CSV is fully processed based on start/end markers."""
-    if not os.path.exists(output_csv_path) or os.stat(output_csv_path).st_size == 0:
+def check_output_file_completion(output_csv_path, input_file_original_stem_for_marker, state=None):
+    """Check an output CSV file to determine if it has proper start and end markers.
+    
+    Parameters
+    ----------
+    output_csv_path : str
+        Path to the output CSV file to check.
+    input_file_original_stem_for_marker : str
+        The original input filename used to construct expected markers.
+    state : dict, optional
+        Current state dictionary for tracking retries.
+        
+    Returns
+    -------
+    bool
+        True if the file appears to be complete, False otherwise.
+    """
+    if not os.path.exists(output_csv_path):
         return False
-
     try:
-        first_line_str = ""
-        last_line_str = ""
-        with open(output_csv_path, 'rb') as f_bin:
-            first_line_bytes = f_bin.readline()
-            first_line_str = first_line_bytes.decode('utf-8', 'replace').strip()
-
-            f_bin.seek(0, os.SEEK_END)
-            current_pos = f_bin.tell()
-
-            if current_pos == 0:
-                 if not first_line_str:
-                    logging.warning("File is empty (binary check): {path}".format(path=output_csv_path))
-                    return False
-                 last_line_str = first_line_str
-            elif current_pos == len(first_line_bytes):
-                last_line_str = first_line_str
-            else:
-                buffer_size = 1024 
-                if current_pos < buffer_size:
-                    buffer_size = current_pos
+        # Find the first line containing the start marker and the last line containing the end marker
+        first_line_str = ""; last_line_str = ""
+        
+        try:
+            with open(output_csv_path, 'rb') as fh:
+                # Read first line
+                first_line_bytes = fh.readline()
+                if first_line_bytes:
+                    first_line_str = first_line_bytes.decode('utf-8', 'replace').strip()
                 
-                f_bin.seek(-buffer_size, os.SEEK_END)
-                buffer_content_bytes = f_bin.read(buffer_size)
+                # Read a buffer from the end for last line (avoiding reading entire file)
+                lines_in_buffer = []
+                chunk_size = 4096  # 4 KB
+                fh.seek(0, os.SEEK_END)
+                filesize = fh.tell()
                 
-                lines_in_buffer = buffer_content_bytes.strip().splitlines() 
+                if filesize > chunk_size:
+                    fh.seek(max(0, filesize - chunk_size))
+                    # Read to discard partial line if not at start of file
+                    if filesize > chunk_size: 
+                        fh.readline()
+                    # Now read complete lines
+                    lines_in_buffer = fh.readlines()
+                else:
+                    # Small file - read it all
+                    fh.seek(0)
+                    lines_in_buffer = fh.readlines()
+                
                 if lines_in_buffer:
                     last_line_str = lines_in_buffer[-1].decode('utf-8', 'replace').strip()
                 elif first_line_str:
                     logging.warning("Could not determine last line via buffer (binary mode) for {path}. First line was: '{fl}'".format(path=output_csv_path, fl=first_line_str))
-
+        except Exception as e:
+            logging.warning(f"Error reading file {output_csv_path} in binary mode: {e}")
+            
         if not last_line_str:
             try:
                 with open(output_csv_path, 'rb') as fh_tail:
@@ -658,9 +677,32 @@ def check_output_file_completion(output_csv_path, input_file_original_stem_for_m
 
         if start_marker_found and end_marker_found:
             if last_line_str == expected_end_marker_error:
-                 logging.warning("File processed with error marker: {path}".format(path=output_csv_path))
-                 # Treat files ending with ERROR marker as INCOMPLETE so they will be retried.
-                 return False
+                logging.warning("File processed with error marker: {path}".format(path=output_csv_path))
+                
+                # Handle retry logic if state is provided
+                if state is not None:
+                    # Get or initialize retry count
+                    retry_key = f"retry_{input_file_original_stem_for_marker}"
+                    retry_count = state.get(retry_key, 0) + 1
+                    state[retry_key] = retry_count
+                    
+                    # If we've reached max retries, move to failed_files directory
+                    if retry_count >= 3:
+                        out_dir = os.path.dirname(output_csv_path)
+                        failed_dir = os.path.join(out_dir, "failed_files")
+                        os.makedirs(failed_dir, exist_ok=True)
+                        
+                        failed_path = os.path.join(failed_dir, os.path.basename(output_csv_path))
+                        try:
+                            shutil.copy2(output_csv_path, failed_path)
+                            os.remove(output_csv_path)  # Remove the original after successful copy
+                            logging.error(f"File {input_file_original_stem_for_marker} failed after 3 retries, moved to failed_files directory")
+                            return False
+                        except Exception as e:
+                            logging.error(f"Error moving file to failed directory: {e}")
+                
+                # Treat files ending with ERROR marker as INCOMPLETE so they will be retried.
+                return False
             return True
         else:
             logging.info(
@@ -1175,14 +1217,20 @@ def execute_batch_processing(inp_dir_str, out_dir_str, mode, global_metamap_bina
     state = load_state(out_dir) or {}
     files_to_process_paths = []
     completed_files_count_initial = 0
+    
+    # Create failed files directory
+    failed_dir = os.path.join(out_dir, "failed_files")
+    os.makedirs(failed_dir, exist_ok=True)
+    
     logging.info(f"Scanning for already completed files in {out_dir}...")
     for input_file_str_path in all_input_files_orig_str:
         input_file_basename = os.path.basename(input_file_str_path)
         output_csv_path_str = derive_output_csv_path(out_dir, input_file_basename)
-        if check_output_file_completion(output_csv_path_str, input_file_basename):
+        if check_output_file_completion(output_csv_path_str, input_file_basename, state):
             completed_files_count_initial += 1
         else:
             if os.path.exists(output_csv_path_str):
+                # Move to error folder if it's an existing but incomplete file
                 failed_dir = os.path.join(out_dir, ERROR_FOLDER)
                 Path(failed_dir).mkdir(parents=True, exist_ok=True)
                 dest_failed = os.path.join(failed_dir, os.path.basename(output_csv_path_str))
@@ -1543,6 +1591,184 @@ def handle_clear_output_directory():
     else:
         print("Clear operation cancelled.")
 
+def handle_list_processed_files():
+    """List pending and completed files in the batch processing."""
+    out_dir = get_config_value("default_output_dir", "./output_csvs")
+    if not os.path.isdir(out_dir):
+        print("No valid output directory configured. Please set one first.")
+        return
+    
+    # Create failed files directory path
+    failed_dir = os.path.join(out_dir, "failed_files")
+    
+    # Find all CSV files in output directory
+    all_csv_files = []
+    for root, _, files in os.walk(out_dir):
+        if root == failed_dir:
+            continue  # Skip failed files directory
+        for filename in files:
+            if filename.endswith('.csv'):
+                all_csv_files.append(os.path.join(root, filename))
+    
+    print(f"\nTotal output files found: {len(all_csv_files)}")
+    
+    # Find files in failed directory
+    failed_files = []
+    if os.path.exists(failed_dir):
+        for filename in os.listdir(failed_dir):
+            file_path = os.path.join(failed_dir, filename)
+            if os.path.isfile(file_path):
+                failed_files.append(filename)
+    
+    if failed_files:
+        print(f"Failed files: {len(failed_files)}")
+    
+    # Check for error markers in output files
+    error_files = []
+    for csv_path in all_csv_files:
+        try:
+            with open(csv_path, 'r') as f:
+                last_line = None
+                for line in f:
+                    if line.strip():
+                        last_line = line.strip()
+                if last_line and ":ERROR" in last_line:
+                    error_files.append(os.path.basename(csv_path))
+        except:
+            pass
+    
+    if error_files:
+        print(f"Files with error markers: {len(error_files)}")
+    
+    # Display menu for viewing files
+    while True:
+        print("\n1. View a completed file")
+        if failed_files:
+            print("2. View a failed file")
+        if error_files:
+            print("3. View a file with error marker")
+        print("4. Back to main menu")
+        
+        choice = input("Enter your choice: ").strip()
+        
+        if choice == '1':
+            view_file_contents(out_dir, all_csv_files)
+        elif choice == '2' and failed_files:
+            view_file_contents(failed_dir, [os.path.join(failed_dir, f) for f in failed_files])
+        elif choice == '3' and error_files:
+            error_file_paths = [f for f in all_csv_files if os.path.basename(f) in error_files]
+            view_file_contents(out_dir, error_file_paths)
+        elif choice == '4':
+            break
+        else:
+            print("Invalid choice. Try again.")
+
+def view_file_contents(directory, file_list):
+    """View contents of a file from the specified list."""
+    if not file_list:
+        print("No files available to view.")
+        return
+    
+    print("\nEnter partial filename to search for:")
+    search_term = input().strip().lower()
+    
+    if not search_term:
+        return
+    
+    # Find matching files
+    matches = []
+    for file_path in file_list:
+        if search_term.lower() in os.path.basename(file_path).lower():
+            matches.append(file_path)
+    
+    if not matches:
+        print("No matching files found.")
+        input("Press Enter to continue...")
+        return
+    
+    if len(matches) > 1:
+        print("\nMultiple matches found:")
+        for i, path in enumerate(matches[:20], 1):
+            print(f"{i}. {os.path.basename(path)}")
+        
+        if len(matches) > 20:
+            print(f"... and {len(matches) - 20} more matches")
+        
+        idx_choice = input("\nEnter number to view (or 0 to cancel): ").strip()
+        if not idx_choice.isdigit() or int(idx_choice) < 1 or int(idx_choice) > min(len(matches), 20):
+            return
+        
+        file_path = matches[int(idx_choice) - 1]
+    else:
+        file_path = matches[0]
+    
+    display_file_snippet(file_path)
+    input("\nPress Enter to continue...")
+
+def display_file_snippet(file_path):
+    """Display a snippet of a file."""
+    try:
+        print(f"\n=== File: {os.path.basename(file_path)} ===")
+        
+        if file_path.endswith('.csv'):
+            # For CSV files, use csv module to properly handle quoting
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                lines = list(csv.reader(f))
+                
+                # Get first and last lines separately (metadata markers)
+                first_line = ""
+                last_line = ""
+                
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as raw_f:
+                    first_line = raw_f.readline().strip()
+                    # Get last line by seeking near the end
+                    try:
+                        raw_f.seek(max(0, os.path.getsize(file_path) - 1024))
+                        last_lines = raw_f.readlines()
+                        if last_lines:
+                            last_line = last_lines[-1].strip()
+                    except Exception as e:
+                        # If seeking fails, read the whole file
+                        raw_f.seek(0)
+                        last_line = raw_f.readlines()[-1].strip()
+                
+                print("\nStart marker:")
+                print(first_line)
+                
+                print("\nEnd marker:")
+                print(last_line)
+                
+                # Display header and first 10 rows
+                if lines:
+                    print("\nHeader:")
+                    if len(lines) > 0:
+                        print(', '.join(lines[0]))
+                    
+                    if len(lines) > 1:
+                        print("\nData (first 10 rows):")
+                        for i, row in enumerate(lines[1:11], 1):
+                            print(f"{i}. {', '.join(row)}")
+                        
+                        if len(lines) > 11:
+                            print(f"\n... and {len(lines) - 11} more rows")
+                    else:
+                        print("\nNo data rows found.")
+                else:
+                    print("Empty file.")
+        else:
+            # For text files, just show first 20 lines
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                lines = f.readlines()
+                
+                print("\nContent (first 20 lines):")
+                for i, line in enumerate(lines[:20], 1):
+                    print(f"{i}: {line.rstrip()}")
+                
+                if len(lines) > 20:
+                    print(f"\n... and {len(lines) - 20} more lines")
+    except Exception as e:
+        print(f"Error reading file: {e}")
+
 def interactive_main_loop():
     if not logging.getLogger().hasHandlers():
         logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stdout)
@@ -1576,7 +1802,7 @@ def interactive_main_loop():
         if choice == '0':
             handle_install_metamap()
         elif choice == '1':
-            configure_all_settings(is_reset=False)  # Re-prompt all
+            handle_configure_settings_menu()
         elif choice == '2':
             handle_run_batch_processing()
         elif choice == '3':
@@ -1597,7 +1823,7 @@ def interactive_main_loop():
                         try:
                             with open(log_fp, "r", encoding="utf-8", errors="ignore") as _tf:
                                 data_lines = _tf.readlines()[-int(lines):]
-                            print("".join(data_lines))
+                                print("".join(data_lines))
                         except Exception as _tf_e:
                             print(f"Error displaying log tail: {_tf_e}")
                 else:
@@ -1605,29 +1831,7 @@ def interactive_main_loop():
             else:
                 print(f"Directory not found: {log_out_dir}")
         elif choice == '6':
-            default_out_p = get_config_value("default_output_dir", "./output_csvs")
-            default_in_p = get_config_value("default_input_dir", "./input_notes")
-            pend_out_dir = input(f"Output dir (def: {default_out_p}): ").strip() or default_out_p
-            pend_in_dir = input(f"Input dir (def: {default_in_p}): ").strip() or default_in_p
-            if os.path.isdir(pend_in_dir) and os.path.isdir(pend_out_dir):
-                all_ins = gather_inputs(pend_in_dir)
-                pending_fs = []
-                completed_fs = []
-                for f_i in all_ins:
-                    base_f_i = os.path.basename(f_i)
-                    out_csv_f_i = derive_output_csv_path(pend_out_dir, base_f_i)
-                    if check_output_file_completion(out_csv_f_i, base_f_i):
-                        completed_fs.append(base_f_i)
-                    else:
-                        pending_fs.append(base_f_i)
-                print(f"\nPending ({len(pending_fs)}): ")
-                [print(f"  {f}") for f in pending_fs[:10]]
-                print("..." if len(pending_fs) > 10 else "")
-                print(f"Completed ({len(completed_fs)}): ")
-                [print(f"  {f}") for f in completed_fs[:10]]
-                print("..." if len(completed_fs) > 10 else "")
-            else:
-                print("Invalid input/output dir for pending/completed.")
+            handle_list_processed_files()
         elif choice == '7':
             handle_kill_all_processes()
         elif choice == '8':
