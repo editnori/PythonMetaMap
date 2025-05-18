@@ -1811,12 +1811,7 @@ def handle_monitor_dashboard():
                 if batch_status == "RUNNING":
                     print(f"Est. Time Remaining: {time_remaining_str}")
                 
-                # Show worker count
-                worker_count = len(children)
-                if worker_count > 0:
-                    avg_cpu = sum(c.cpu_percent(interval=0.1) for c in children) / worker_count
-                    avg_mem = sum(c.memory_info().rss / (1024*1024) for c in children) / worker_count
-                    print(f"Workers: {worker_count} active | Avg CPU: {avg_cpu:.1f}% | Avg RAM: {avg_mem:.1f} MB")
+                                # Show worker count                worker_count = len(children)                if worker_count > 0:                    # Get CPU and memory stats safely                    try:                        # Use list comprehensions with safe error handling                        cpu_values = []                        mem_values = []                        for c in children:                            try:                                cpu_values.append(c.cpu_percent(interval=0.1))                                mem_values.append(c.memory_info().rss / (1024*1024))                            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):                                # Skip terminated processes                                pass                                                if cpu_values and mem_values:                            avg_cpu = sum(cpu_values) / len(cpu_values)                            avg_mem = sum(mem_values) / len(mem_values)                            print(f"Workers: {worker_count} active | Avg CPU: {avg_cpu:.1f}% | Avg RAM: {avg_mem:.1f} MB")                        else:                            print(f"Workers: {worker_count} active | Stats unavailable (processes changing)")                    except Exception as e:                        print(f"Workers: {worker_count} active | Stats error: {e}")
                 
                 # Show top 5 active workers from state
                 if active_workers:
@@ -2552,199 +2547,86 @@ def handle_retry_failed_files():
         print("Retry cancelled.")
         return
     
-    # Process files
-    print("\nStarting batch retry processing...")
+    # Auto-use nohup mode on Unix systems
+    use_nohup = True
+    if sys.platform == "win32":
+        use_nohup = False  # Not supported on Windows
     
-    # Set environment variable for the increased timeout
-    os.environ["PYMM_TIMEOUT"] = str(timeout)
-    
-    metamap_binary_path = get_config_value("metamap_binary_path")
-    if not metamap_binary_path:
-        print("Error: MetaMap binary path not configured")
-        return
-    
-    # Initialize PyMetaMap only once
-    try:
-        print("Initializing PyMetaMap...")
-        from pymm import Metamap as PyMetaMap
-        mm = None  # Will initialize for each file to avoid cross-contamination
-        
-        # Process each file
-        success_count = 0
-        error_count = 0
-        
-        for i, (orig_filename, (csv_name, file_type)) in enumerate(unique_files.items(), 1):
-            print(f"\n[{i}/{len(unique_files)}] Processing: {orig_filename}")
+    # Execute retry in nohup mode (like regular batch processing)
+    if use_nohup:
+        # Create nohup command for retries
+        script_name = os.path.basename(sys.argv[0])
+        if script_name == "pymm-cli" or script_name == "pymm":
+            # Build command with necessary parameters for retry
+            retry_id = f"retry_{int(time.time())}"
+            retry_log_path = os.path.join(out_abs, f"{retry_id}.log")
             
-            # Get paths
-            input_path = os.path.join(default_input_dir, orig_filename)
-            output_csv_path = derive_output_csv_path(out_abs, orig_filename)
+            # Store retry information in state file
+            state = load_state(out_abs) or {}
+            state[retry_id] = {
+                "start_time": datetime.now().isoformat(),
+                "total_files": len(unique_files),
+                "status": "pending",
+                "type": "retry_batch"
+            }
+            save_state(out_abs, state)
             
-            # Check input file
-            if not os.path.exists(input_path):
-                print(f"  Error: Input file not found: {input_path}")
-                error_count += 1
-                continue
+            # Store file list for retry
+            retry_files_path = os.path.join(out_abs, f"{retry_id}.files")
+            with open(retry_files_path, 'w') as f:
+                for orig_filename in unique_files.keys():
+                    f.write(f"{orig_filename}\n")
             
-            # Backup existing output file if any
-            if os.path.exists(output_csv_path):
-                backup_path = output_csv_path + f".bak.{int(time.time())}"
-                try:
-                    shutil.copy2(output_csv_path, backup_path)
-                    print(f"  Existing output file backed up to: {os.path.basename(backup_path)}")
-                    os.remove(output_csv_path)
-                except Exception as e:
-                    print(f"  Warning: Failed to backup/remove existing output file: {e}")
+            # Create environment variables file for the retry process
+            env_file_path = os.path.join(out_abs, f"{retry_id}.env")
+            with open(env_file_path, 'w') as f:
+                f.write(f"PYMM_TIMEOUT={timeout}\n")
+                f.write(f"RETRY_BATCH_ID={retry_id}\n")
+                f.write(f"RETRY_FILES_PATH={retry_files_path}\n")
             
-            # Process the file
+            # Build nohup command - simplified version that just calls a retry-specific command
+            nohup_cmd = f"nohup {script_name} retry-batch {out_abs} {default_input_dir} {retry_id} > {retry_log_path} 2>&1 &"
+            
+            print(f"\nRunning retry in nohup background mode with command:")
+            print(f"  {nohup_cmd}")
+            
+            # Execute the nohup command
             try:
-                # Create a fresh MetaMap instance for each file
-                if mm is not None:
-                    try:
-                        mm.close()
-                    except:
-                        pass
-                mm = PyMetaMap(metamap_binary_path, debug=True)
-                
-                # Read input file
-                with open(input_path, 'r', encoding='utf-8') as f_in:
-                    whole_note = f_in.read().strip()
-                
-                if not whole_note:
-                    print("  Input file is empty. Skipping.")
-                    error_count += 1
-                    continue
-                
-                lines = [whole_note]
-                
-                print(f"  Processing with timeout {timeout}s...")
-                start_time = time.time()
-                
-                # Run MetaMap
-                mmos_iter = mm.parse(lines, timeout=timeout)
-                
-                # Check result
-                if not mmos_iter or (hasattr(mmos_iter, '__len__') and len(mmos_iter) == 0):
-                    print("  Warning: No concepts found or XML parsing error")
-                    # Write empty output with headers
-                    with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
-                        f_out.write(f"{START_MARKER_PREFIX}{orig_filename}\n")
-                        writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
-                        writer.writerow(CSV_HEADER)
-                        f_out.write(f"{END_MARKER_PREFIX}{orig_filename}:ERROR\n")
-                    print("  Created empty output CSV with error marker")
-                    error_count += 1
-                    continue
-                
-                # Extract concepts
-                concepts_list = [concept for mmo_item in mmos_iter for concept in mmo_item]
-                print(f"  Found {len(concepts_list)} concepts")
-                
-                # Write to CSV (simplified version)
-                with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
-                    f_out.write(f"{START_MARKER_PREFIX}{orig_filename}\n")
-                    writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
-                    writer.writerow(CSV_HEADER)
-                    
-                    concept_count = 0
-                    if concepts_list:
-                        for concept in concepts_list:
-                            try:
-                                if not concept.ismapping:
-                                    continue
-                                
-                                concept_name = getattr(concept, 'concept_name', getattr(concept, 'preferred_name', concept.matched))
-                                pref_name = getattr(concept, 'preferred_name', concept_name)
-                                phrase_text = getattr(concept, 'phrase_text', None) or getattr(concept, 'phrase', None) or getattr(concept, 'matched', '')
-                                sem_types_formatted = ":".join(concept.semtypes) if getattr(concept, 'semtypes', None) else ""
-                                sources_formatted = "|".join(concept.sources) if getattr(concept, 'sources', None) else ""
-                                
-                                # Get position value (simplified)
-                                position_value = ""
-                                if concept.pos_start is not None and concept.pos_length is not None:
-                                    position_value = f"{concept.pos_start}:{concept.pos_length}"
-                                elif concept.phrase_start is not None and concept.phrase_length is not None:
-                                    position_value = f"{concept.phrase_start}:{concept.phrase_length}"
-                                
-                                row_data = [
-                                    concept.cui,
-                                    concept.score,
-                                    concept_name,
-                                    pref_name,
-                                    phrase_text,
-                                    sem_types_formatted,
-                                    sources_formatted,
-                                    position_value,
-                                ]
-                                writer.writerow([pymm_escape_csv_field(field) for field in row_data])
-                                concept_count += 1
-                            except Exception as e_concept:
-                                print(f"  Error processing concept: {e_concept}")
-                    
-                    # Write end marker
-                    if concept_count > 0:
-                        f_out.write(f"{END_MARKER_PREFIX}{orig_filename}\n")
-                        success_status = True
-                    else:
-                        f_out.write(f"{END_MARKER_PREFIX}{orig_filename}:ERROR\n")
-                        success_status = False
-                
-                end_time = time.time()
-                duration = end_time - start_time
-                
-                if success_status:
-                    print(f"  Success: {concept_count} concepts written in {duration:.2f} seconds")
-                    success_count += 1
-                    
-                    # If the file was in the failed_dir, remove it
-                    if file_type == "failed_dir":
-                        failed_file_path = os.path.join(failed_dir, csv_name)
-                        if os.path.exists(failed_file_path):
-                            try:
-                                os.remove(failed_file_path)
-                                print(f"  Removed file from failed_dir: {csv_name}")
-                            except:
-                                pass
-                else:
-                    print(f"  Failed: No concepts written in {duration:.2f} seconds")
-                    error_count += 1
-                
+                os.system(nohup_cmd)
+                print(f"Retry process started in background. Check progress with Monitor Dashboard.")
+                print(f"Log file: {retry_log_path}")
+                return
             except Exception as e:
-                print(f"  Error processing file: {e}")
-                error_count += 1
-                
-                # Write error marker
-                try:
-                    with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
-                        f_out.write(f"{START_MARKER_PREFIX}{orig_filename}\n")
-                        writer = csv.writer(f_out, quoting=csv.QUOTE_ALL, doublequote=True)
-                        writer.writerow(CSV_HEADER)
-                        f_out.write(f"{END_MARKER_PREFIX}{orig_filename}:ERROR\n")
-                    print("  Created output CSV with error marker")
-                except:
-                    pass
-        
-        # Final cleanup
-        if mm is not None:
-            try:
-                mm.close()
-            except:
-                pass
-        
-        # Summary
-        print("\n=== Retry Processing Summary ===")
-        print(f"Total Files: {len(unique_files)}")
-        print(f"Successful : {success_count}")
-        print(f"Failed     : {error_count}")
-        
-        # Reset environment variable
-        if "PYMM_TIMEOUT" in os.environ:
-            del os.environ["PYMM_TIMEOUT"]
-            
-    except Exception as e:
-        print(f"Error in batch retry processing: {e}")
-        import traceback
-        traceback.print_exc()
+                print(f"Error starting nohup process: {e}")
+                print("Continuing in foreground mode.")
+    
+    # If nohup not available or failed, use fork or regular mode
+    background_options = "1"  # Default to regular background mode if not nohup
+    
+    # Handle background processing
+    if background_options == "1" or background_options.lower() == "yes":
+        try:
+            # Fork for Unix-like systems
+            if hasattr(os, 'fork'):
+                pid = os.fork()
+                if pid > 0:
+                    # Parent process
+                    print(f"Started background retry process with PID {pid}")
+                    retry_pid_path = os.path.join(out_abs, ".retry_pid")
+                    with open(retry_pid_path, 'w') as f:
+                        f.write(str(pid))
+                    print(f"To check status: Look for files in {out_abs}")
+                    print(f"PID stored in: {retry_pid_path}")
+                    return
+                # Child process continues below
+            else:
+                # Windows - try to detach as a background process
+                print("Background mode not fully supported on this platform.")
+                print("Process will continue running but may be tied to this terminal.")
+                print("For better background support, use 'start pythonw' on Windows.")
+        except Exception as e:
+            print(f"Error starting background process: {e}")
+            print("Continuing in foreground mode.")
 
 def interactive_main_loop():
     if not logging.getLogger().hasHandlers():
