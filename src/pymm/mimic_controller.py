@@ -30,6 +30,7 @@ from pathlib import Path
 import csv
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import shlex
+import socket
 
 # Check and install dependencies
 def check_and_install_dependencies():
@@ -343,15 +344,57 @@ def start_metamap_servers(public_mm_dir):
     if not (os.path.isfile(skr_ctl) and os.path.isfile(wsd_ctl) and os.path.isfile(mmserver)):
         print("MetaMap server scripts not found in", bin_path)
         return
-    print("Launching Tagger, WSD, and mmserver20…")
-    _run_quiet([skr_ctl, "start"])
-    _run_quiet([wsd_ctl, "start"])
-    # Launch mmserver20 in background
+    
+    print("Launching MetaMap servers...")
+    
+    # Start Tagger
+    print("Starting SKR/MedPost tagger...")
+    result_skr = subprocess.run([skr_ctl, "start"], capture_output=True, text=True)
+    if result_skr.returncode == 0:
+        print("SKR/MedPost tagger started successfully")
+    else:
+        print(f"Error starting SKR/MedPost tagger: {result_skr.stderr}")
+    time.sleep(2)  # Give it time to start
+
+    # Start WSD
+    print("Starting WSD server...")
+    result_wsd = subprocess.run([wsd_ctl, "start"], capture_output=True, text=True)
+    if result_wsd.returncode == 0:
+        print("WSD server start command issued")
+    else:
+        print(f"Error starting WSD server: {result_wsd.stderr}")
+    
+    # Wait for WSD server to actually start
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        time.sleep(2)  # Give it time to start
+        if is_wsd_server_running():
+            print("WSD server is running on port 5554")
+            break
+        elif attempt < max_attempts - 1:
+            print(f"Waiting for WSD server to start (attempt {attempt+1}/{max_attempts})...")
+        else:
+            print("WARNING: WSD server does not appear to be running after multiple attempts")
+            print("This may cause errors during MetaMap processing")
+    
+    # Start mmserver20
+    print("Starting mmserver20...")
     try:
-        subprocess.Popen([mmserver])
+        # Check if already running
+        existing = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        if existing.returncode != 0:
+            # Start the server in background
+            subprocess.Popen([mmserver], cwd=bin_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print("mmserver20 launched in background")
+            time.sleep(2)  # Give it time to start
+        else:
+            print("mmserver20 is already running")
     except Exception as e:
-        print("Could not start mmserver20:", e)
+        print(f"Error starting mmserver20: {e}")
+    
     print("Start commands issued. Use 'Status' to verify.")
+    # Show status after starting
+    status_metamap_servers(public_mm_dir)
 
 def stop_metamap_servers(public_mm_dir):
     bin_path = os.path.join(public_mm_dir, "bin")
@@ -379,6 +422,13 @@ def status_metamap_servers(public_mm_dir):
     print("--- WSD Server Status ---")
     if os.path.isfile(wsd_ctl):
         subprocess.run([wsd_ctl, "status"], check=False)
+        # Double-check if WSD server is actually accessible via network
+        wsd_running = is_wsd_server_running()
+        if wsd_running:
+            print("WSD server is accessible on port 5554")
+        else:
+            print("WARNING: WSD server process might be running but is not accessible on port 5554")
+            print("This will cause errors in MetaMap processing")
     else:
         print(f"wsdserverctl not found at {wsd_ctl}")
 
@@ -575,28 +625,39 @@ def ensure_servers_running():
     wsd_ctl = os.path.join(bin_path, "wsdserverctl")
     mmserver = os.path.join(bin_path, "mmserver20")
 
+    # Always start servers that are needed rather than just checking
+    print("Starting MetaMap servers...")
+    
     # Tagger
     if os.path.isfile(skr_ctl):
-        res = subprocess.run([skr_ctl, "status"], capture_output=True, text=True)
-        if "is stopped" in res.stdout.lower() or res.returncode != 0:
-            print("Starting SKR/MedPost tagger…")
-            _run_quiet([skr_ctl, "start"], cwd=bin_path)
+        print("Starting SKR/MedPost tagger...")
+        subprocess.run([skr_ctl, "start"], cwd=bin_path)
+        time.sleep(2)  # Give it time to start
 
     # WSD
     if os.path.isfile(wsd_ctl):
-        res = subprocess.run([wsd_ctl, "status"], capture_output=True, text=True)
-        if "is stopped" in res.stdout.lower() or res.returncode != 0:
-            print("Starting WSD server…")
-            _run_quiet([wsd_ctl, "start"], cwd=bin_path)
+        print("Starting WSD server...")
+        subprocess.run([wsd_ctl, "start"], cwd=bin_path)
+        time.sleep(2)  # Give it time to start
 
     # mmserver20 (fire-and-forget)
-    try:
-        existing = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        if existing.returncode != 0 and os.path.isfile(mmserver):
-            print("Launching mmserver20 in background…")
-            subprocess.Popen([mmserver], cwd=bin_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+    if os.path.isfile(mmserver):
+        print("Launching mmserver20 in background...")
+        try:
+            # Check if mmserver is already running
+            existing = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            if existing.returncode != 0:
+                # Start the server in background
+                subprocess.Popen([mmserver], cwd=bin_path, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                time.sleep(2)  # Give it time to start
+            else:
+                print("mmserver20 already running")
+        except Exception as e:
+            print(f"Error starting mmserver20: {e}")
+    
+    # Verify all servers are running
+    print("Verifying server status...")
+    status_metamap_servers(public_mm_dir)
 
 # --- Helper Functions (rglob_compat, load_state, etc.) ---
 def rglob_compat(directory, pattern):
@@ -928,6 +989,34 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
             # Check if we received an empty result due to XML parsing error
             if not mmos_iter and hasattr(mmos_iter, '__len__') and len(mmos_iter) == 0:
                 logging.warning(f"[{worker_id}] XML parsing error for {input_file_basename} - returning empty concept list")
+                
+                # Check if WSD server is running - this might be the cause of the issue
+                wsd_running = is_wsd_server_running()
+                if not wsd_running:
+                    logging.error(f"[{worker_id}] WSD server is not running on port 5554 - this is likely causing XML parsing errors")
+                    print(f"\n[{worker_id}] ERROR: WSD Server is not running! Attempting to restart it...")
+                    
+                    # Try to restart WSD server automatically
+                    binary_path = get_config_value("metamap_binary_path")
+                    if binary_path:
+                        public_mm_dir = os.path.abspath(os.path.join(os.path.dirname(binary_path), os.pardir))
+                        if os.path.isdir(public_mm_dir):
+                            bin_path = os.path.join(public_mm_dir, "bin")
+                            wsd_ctl = os.path.join(bin_path, "wsdserverctl")
+                            if os.path.isfile(wsd_ctl):
+                                print(f"[{worker_id}] Restarting WSD server...")
+                                subprocess.run([wsd_ctl, "restart"], check=False)
+                                # Give it time to start
+                                max_attempts = 3
+                                for attempt in range(max_attempts):
+                                    time.sleep(3)
+                                    if is_wsd_server_running():
+                                        print(f"[{worker_id}] WSD server restarted successfully")
+                                        logging.info(f"[{worker_id}] WSD server restarted successfully")
+                                        break
+                                    elif attempt < max_attempts - 1:
+                                        print(f"[{worker_id}] Waiting for WSD server (attempt {attempt+1}/{max_attempts})...")
+                
                 # Write a valid CSV file anyway with just the headers
                 with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
                     f_out.write(f"{START_MARKER_PREFIX}{input_file_basename}\n")
@@ -1457,8 +1546,18 @@ def handle_run_batch_processing():
                 print("Background execution not supported on this platform")
                 # Continue with normal execution
 
-    # Auto-start MetaMap servers if needed
-    ensure_servers_running()
+        # Always force-start MetaMap servers before batch processing
+        print("Ensuring MetaMap servers are running (required for batch processing)...")
+        metamap_binary_p = get_config_value("metamap_binary_path")
+        if metamap_binary_p:
+            public_mm_dir = os.path.abspath(os.path.join(os.path.dirname(metamap_binary_p), os.pardir))
+            if os.path.isdir(public_mm_dir):
+                start_metamap_servers(public_mm_dir)
+            else:
+                print("Warning: Could not determine public_mm directory from binary path")
+                ensure_servers_running()
+        else:
+            ensure_servers_running()
 
     mode = "start" 
     if os.listdir(out_dir) and any(f.endswith('.csv') or f == STATE_FILE for f in os.listdir(out_dir)):
@@ -2988,8 +3087,20 @@ def main():
     if subcmd in {"start", "resume"}:
         if len(sys.argv) != 4: logging.error(f"Error: {subcmd} command requires INPUT_DIR and OUTPUT_DIR arguments."); print(f"Usage: pymm-cli {subcmd} INPUT_DIR OUTPUT_DIR"); sys.exit(1)
         inp_dir_str, out_dir_str = sys.argv[2:4]
-        # Auto-start MetaMap servers if needed
-        ensure_servers_running()
+                
+        # Always force-start MetaMap servers before batch processing
+        print("Ensuring MetaMap servers are running (required for batch processing)...")
+        metamap_binary_p = get_config_value("metamap_binary_path")
+        if metamap_binary_p:
+            public_mm_dir = os.path.abspath(os.path.join(os.path.dirname(metamap_binary_p), os.pardir))
+            if os.path.isdir(public_mm_dir):
+                start_metamap_servers(public_mm_dir)
+            else:
+                print("Warning: Could not determine public_mm directory from binary path")
+                ensure_servers_running()
+        else:
+            ensure_servers_running()
+                    
         current_metamap_options = get_config_value("metamap_processing_options", default_metamap_options)
         execute_batch_processing(inp_dir_str, out_dir_str, subcmd, configured_metamap_binary_path, current_metamap_options)
     
@@ -3612,6 +3723,22 @@ def display_performance_metrics(metrics):
         print(f"Peak memory usage: {metrics['peak_memory_usage']:.2f} MB")
     
     print("-------------------------")
+
+def is_wsd_server_running():
+    """Check if the WSD server is actually running by trying to connect to port 5554."""
+    import socket
+    try:
+        # Try to connect to WSD server port
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)  # 2 second timeout
+        result = sock.connect_ex(('localhost', 5554))
+        sock.close()
+        
+        # If result is 0, the port is open and server is likely running
+        return result == 0
+    except Exception as e:
+        print(f"Error checking WSD server: {e}")
+        return False
 
 if __name__ == "__main__":
     import multiprocessing as _mp
