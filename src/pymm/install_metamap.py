@@ -435,6 +435,44 @@ def main():
                 return None # Exit if removal fails
         else:
             print("Skipping reinstallation. Using existing installation.")
+            
+            # New code to ask if user wants to run the install.sh script without removing the installation
+            install_script_path = os.path.join(META_INSTALL_DIR, "public_mm", "bin", "install.sh")
+            if os.path.exists(install_script_path):
+                run_script_choice = input(f"Would you like to run the MetaMap install script ({install_script_path}) in place? (yes/no): ").strip().lower()
+                if run_script_choice == 'yes':
+                    print(f"Running install script: {install_script_path}")
+                    # Setup the running environment
+                    install_script_dir = os.path.dirname(install_script_path)
+                    public_mm_dir = os.path.dirname(install_script_dir)
+                    
+                    # Run the script - similar to run_install_script() but with specific path
+                    try:
+                        subprocess.call(["chmod", "+x", install_script_path])
+                        print(f"Executing installer from: {public_mm_dir}")
+                        process = subprocess.Popen(["bash", "bin/install.sh"], cwd=public_mm_dir, 
+                                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                                 text=True, bufsize=1)
+                        
+                        # Stream output with tqdm
+                        if process.stdout:
+                            with tqdm(desc="install.sh output", unit=" lines", ascii=True) as pbar:
+                                for line in iter(process.stdout.readline, ''):
+                                    sys.stdout.write(line)
+                                    sys.stdout.flush()
+                                    pbar.update(1)
+                            process.stdout.close()
+                        
+                        process.wait()
+                        
+                        if process.returncode == 0:
+                            print(f"\nInstallation script finished successfully (return code 0).")
+                            test_metamap_installation(EXPECTED_METAMAP_BINARY)
+                        else:
+                            print(f"\nInstallation script failed (return code {process.returncode}). Check output above for errors.")
+                    except Exception as e:
+                        print(f"\nError running install.sh: {e}")
+            
             return EXPECTED_METAMAP_BINARY # Return path to existing binary
     
     # If not fully installed, print advisory messages

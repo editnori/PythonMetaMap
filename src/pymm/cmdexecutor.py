@@ -145,3 +145,57 @@ class MetamapCommand:
             print("[pymm][MetaMap stderr]", stderr.strip())
 
         return stdout, stderr
+
+def verify_metamap_server_connectivity(metamap_binary_path):
+    """
+    Run a short test with MetaMap binary to verify it can connect to the servers.
+    Returns a tuple of (success, error_message)
+    """
+    import tempfile
+    import os
+    import subprocess
+    import time
+    
+    # Create temp files for test
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_input:
+            temp_input.write("This is a test")
+            temp_input_path = temp_input.name
+            
+        with tempfile.NamedTemporaryFile(delete=False) as temp_output:
+            temp_output_path = temp_output.name
+            
+        # Basic command with no extra options that would invoke WSD/tagger specifically
+        cmd = [metamap_binary_path, "--XMLf1", temp_output_path, temp_input_path]
+        
+        # Run with a short timeout - we just want to see if it connects
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            # Check if there are connection errors in stderr
+            error_output = result.stderr.lower()
+            if "error(system_error,system_error(spio_e_net_connrefused))" in error_output:
+                return False, "Connection refused. Servers may not be fully initialized."
+            elif "tagger" in error_output and ("error" in error_output or "failed" in error_output):
+                return False, "Tagger server connection error"
+            elif "wsd" in error_output and ("error" in error_output or "failed" in error_output):
+                return False, "WSD server connection error"
+            elif result.returncode != 0:
+                return False, f"MetaMap binary returned non-zero exit code: {result.returncode}"
+                
+            # If we get here without errors, connection is likely successful
+            return True, ""
+            
+        except subprocess.TimeoutExpired:
+            return False, "Timeout while testing MetaMap connectivity"
+        except Exception as e:
+            return False, f"Error running MetaMap test: {str(e)}"
+            
+    finally:
+        # Clean up temp files
+        for path in [temp_input_path, temp_output_path]:
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+            except:
+                pass

@@ -1,0 +1,27 @@
+include LICENSE.txt
+include README.md
+include requirements.txt
+include setup.cfg
+recursive-include src/pymm *.py
+
+# Exclude the following
+prune input_notes
+prune output_csvs
+prune scp
+prune metamap_install
+prune .venv
+prune .venv-test
+prune .eggs
+prune .github
+prune **/__pycache__
+global-exclude *.pyc
+global-exclude *.pyo
+global-exclude *.pyd
+global-exclude __pycache__
+global-exclude .git*
+
+# Exclude specific files
+exclude fix_indentation.py
+exclude setup_metamap_wsl.md
+exclude verify_java_bridge.py
+exclude *.log 

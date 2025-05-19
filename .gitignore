@@ -1,3 +1,49 @@
+# Python virtual environments
+.venv
+.venv-test
+.venv-test/
+
+# MetaMap installation
+metamap_install/
+metamap_install
+
+# Input and output directories
+input_notes/
+output_csvs/
+output_csvs/failed_files/
+scp/
+
+# Build artifacts
+.eggs/
+*.egg-info/
+dist/
+build/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Specific files to ignore
+fix_indentation.py
+setup_metamap_wsl.md
+verify_java_bridge.py
+generic_controller.log
+install.log
+*.log
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -102,9 +148,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
-
-# MetaMap local installation
-metamap_install/
 
 # Specific Java class files (if any remain)
 BatchRunner01.class

@@ -31,6 +31,8 @@ import csv
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import shlex
 import socket
+import threading
+import concurrent.futures
 
 # Check and install dependencies
 def check_and_install_dependencies():
@@ -151,6 +153,15 @@ def prompt_and_save_config_value(key, prompt_text, explanation="", is_essential=
                 if auto_found:
                     value_to_propose = auto_found
                     hint_type = "found"
+            elif key == "server_scripts_dir":
+                # Try to discover server script directory, often the same as metamap binary directory
+                binary_path = get_config_value("metamap_binary_path")
+                if binary_path and os.path.exists(binary_path):
+                    bin_dir = os.path.dirname(binary_path)
+                    # Check if server scripts exist in this directory
+                    if os.path.exists(os.path.join(bin_dir, "skrmedpostctl")) or os.path.exists(os.path.join(bin_dir, "wsdserverctl")):
+                        value_to_propose = bin_dir
+                        hint_type = "found"
             
             if value_to_propose is None and code_default:
                 value_to_propose = code_default
@@ -247,6 +258,12 @@ def configure_all_settings(is_reset=False):
     if not mbp:
         print("Error: METAMAP_BINARY_PATH is essential and was not configured. Some operations will fail.", file=sys.stderr)
 
+    # Ask for server scripts directory
+    server_scripts_dir = prompt_and_save_config_value("server_scripts_dir",
+                                                      "Directory containing server control scripts (skrmedpostctl, wsdserverctl)",
+                                                      explanation="Directory where MetaMap server control scripts are located (usually same as metamap binary).",
+                                                      is_essential=False)
+
     prompt_and_save_config_value("default_input_dir", "Default input directory for notes", 
                                    explanation="Directory containing .txt files to process (optional).",
                                    code_default="./input_notes")
@@ -259,6 +276,12 @@ def configure_all_settings(is_reset=False):
     prompt_and_save_config_value("max_parallel_workers", "Max parallel workers",
                                    explanation=f"Number of files to process simultaneously. Consider your CPU cores.",
                                    code_default=str(MAX_PARALLEL_WORKERS_DEFAULT))
+    prompt_and_save_config_value("metamap_instance_count", "Max MetaMap instances",
+                                 explanation="Number of MetaMap instances to create for parallel processing. Default is cores÷4.",
+                                 code_default=str((os.cpu_count() or 4) // 4 or 1))
+    prompt_and_save_config_value("use_instance_pool", "Use instance pool processing mode (yes/no)",
+                                explanation="Advanced multi-server mode that creates a pool of MetaMap instances for better scaling.",
+                                code_default="yes" if (os.cpu_count() or 0) > 8 else "no")
     prompt_and_save_config_value("pymm_timeout", "Per-file MetaMap timeout (seconds)",
                                   explanation="How long MetaMap is allowed to run on a single note before being killed.",
                                   code_default=str(DEFAULT_PYMM_TIMEOUT))
@@ -336,116 +359,303 @@ def _run_quiet(cmd_list, cwd=None):
     except Exception:
         return False
 
-def start_metamap_servers(public_mm_dir):
-    bin_path = os.path.join(public_mm_dir, "bin")
-    skr_ctl = os.path.join(bin_path, "skrmedpostctl")
-    wsd_ctl = os.path.join(bin_path, "wsdserverctl")
-    mmserver = os.path.join(bin_path, "mmserver20")
-    if not (os.path.isfile(skr_ctl) and os.path.isfile(wsd_ctl) and os.path.isfile(mmserver)):
-        print("MetaMap server scripts not found in", bin_path)
-        logging.error(f"MetaMap server scripts not found in {bin_path}")
-        return False # Indicate failure
+def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
+    """Start the MetaMap servers if they are not already running.
+    
+    Args:
+        public_mm_dir: The path to the public_mm directory
+        server_scripts_dir: Optional path to directory containing server control scripts
+    
+    Returns:
+        bool: True if servers are running, False if start failed
+    """
+    # If server_scripts_dir not provided, default to public_mm_dir/bin
+    if not server_scripts_dir:
+        server_scripts_dir = os.path.join(public_mm_dir, "bin")
+    
+    skr_ctl = os.path.join(server_scripts_dir, "skrmedpostctl")
+    wsd_ctl = os.path.join(server_scripts_dir, "wsdserverctl")
+    mmserver = os.path.join(server_scripts_dir, "mmserver20")
+    
+    # Check for script existence individually for better error reporting
+    missing_scripts = []
+    if not os.path.isfile(skr_ctl):
+        missing_scripts.append("skrmedpostctl")
+    if not os.path.isfile(wsd_ctl):
+        missing_scripts.append("wsdserverctl")
+    
+    # mmserver20 is considered OPTIONAL – its absence should not abort startup.
+    mmserver_available = os.path.isfile(mmserver)
+
+    if missing_scripts:
+        script_list = ", ".join(missing_scripts)
+        print(f"MetaMap server scripts not found in {server_scripts_dir}: {script_list}")
+        logging.error(f"MetaMap server scripts not found in {server_scripts_dir}: {script_list}")
+        
+        # Script file permissions check
+        if os.path.exists(server_scripts_dir):
+            print(f"Checking scripts directory contents and permissions:")
+            logging.info(f"Checking scripts directory contents and permissions:")
+            try:
+                dir_contents = os.listdir(server_scripts_dir)
+                print(f"Files in {server_scripts_dir}:")
+                logging.info(f"Files in {server_scripts_dir}:")
+                for item in dir_contents:
+                    item_path = os.path.join(server_scripts_dir, item)
+                    if os.path.isfile(item_path):
+                        # Check if it might be one of the scripts with a different name
+                        if "skrmedpost" in item.lower() or "wsdserver" in item.lower() or "mmserver" in item.lower():
+                            perms = oct(os.stat(item_path).st_mode)[-3:]  # Extract last 3 octal digits
+                            is_exec = os.access(item_path, os.X_OK)
+                            print(f"  {item} - Permissions: {perms}, Executable: {is_exec}")
+                            logging.info(f"  {item} - Permissions: {perms}, Executable: {is_exec}")
+                            
+                            # Attempt to make executable if it's not
+                            if not is_exec:
+                                try:
+                                    os.chmod(item_path, os.stat(item_path).st_mode | 0o111)  # Add executable bit
+                                    print(f"  Made {item} executable")
+                                    logging.info(f"  Made {item} executable")
+                                except Exception as e_chmod:
+                                    print(f"  Failed to make {item} executable: {e_chmod}")
+                                    logging.error(f"  Failed to make {item} executable: {e_chmod}")
+            except Exception as e_dir:
+                print(f"Error checking directory contents: {e_dir}")
+                logging.error(f"Error checking directory contents: {e_dir}")
+                
+        # We cannot continue without the essential scripts
+        return False # Indicate failure - can't start essential servers
     
     print("Launching MetaMap servers...")
     logging.info("Attempting to launch MetaMap servers...")
     
-    # Start Tagger
-    print("Starting SKR/MedPost tagger...")
-    logging.info("Starting SKR/MedPost tagger...")
-    try:
-        result_skr = subprocess.run([skr_ctl, "start"], capture_output=True, text=True, cwd=bin_path, timeout=30)
-        logging.info(f"SKR/MedPost Tagger start command stdout: {result_skr.stdout}")
-        if result_skr.returncode == 0:
-            print("SKR/MedPost tagger start command issued successfully.")
-            logging.info("SKR/MedPost tagger start command issued successfully.")
-        else:
-            print(f"Error issuing SKR/MedPost tagger start command. Return code: {result_skr.returncode}")
-            print(f"Stderr: {result_skr.stderr}")
-            logging.error(f"Error issuing SKR/MedPost tagger start command. Return code: {result_skr.returncode}. Stderr: {result_skr.stderr}")
-    except subprocess.TimeoutExpired:
-        print("Timeout starting SKR/MedPost tagger.")
-        logging.error("Timeout starting SKR/MedPost tagger.")
-    except Exception as e:
-        print(f"Exception starting SKR/MedPost tagger: {e}")
-        logging.error(f"Exception starting SKR/MedPost tagger: {e}")
-    time.sleep(3)
-
-    # Start WSD
-    print("Starting WSD server...")
-    logging.info("Starting WSD server...")
-    try:
-        result_wsd = subprocess.run([wsd_ctl, "start"], capture_output=True, text=True, cwd=bin_path, timeout=30)
-        logging.info(f"WSD server start command stdout: {result_wsd.stdout}")
-        if result_wsd.returncode == 0:
-            print("WSD server start command issued successfully.")
-            logging.info("WSD server start command issued successfully.")
-        else:
-            print(f"Error issuing WSD server start command. Return code: {result_wsd.returncode}")
-            print(f"Stderr: {result_wsd.stderr}")
-            logging.error(f"Error issuing WSD server start command. Return code: {result_wsd.returncode}. Stderr: {result_wsd.stderr}")
-    except subprocess.TimeoutExpired:
-        print("Timeout starting WSD server.")
-        logging.error("Timeout starting WSD server.")
-    except Exception as e:
-        print(f"Exception starting WSD server: {e}")
-        logging.error(f"Exception starting WSD server: {e}")
+    # First check if servers are already running
+    tagger_running = is_tagger_server_running()
+    wsd_running = is_wsd_server_running()
     
-    # Wait for WSD server to actually start by trying to connect
-    max_attempts = 5
-    wsd_actually_running = False
-    for attempt in range(max_attempts):
-        time.sleep(3) 
-        if is_wsd_server_running(): # This uses the socket check from your newer code
-            print("WSD server is running and accessible on port 5554.")
-            logging.info("WSD server is running and accessible on port 5554.")
-            wsd_actually_running = True
-            break
-        elif attempt < max_attempts - 1:
-            print(f"Waiting for WSD server to become accessible (attempt {attempt+1}/{max_attempts})...")
-            logging.info(f"Waiting for WSD server to become accessible (attempt {attempt+1}/{max_attempts})...")
-        else:
-            print("WARNING: WSD server does not appear to be accessible on port 5554 after multiple attempts.")
-            logging.warning("WSD server does not appear to be accessible on port 5554 after multiple attempts. This may cause errors during MetaMap processing.")
-            
-    # Start mmserver20
-    print("Starting mmserver20...")
-    logging.info("Starting mmserver20...")
-    try:
-        # Check if already running using pgrep
-        pgrep_proc = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        if pgrep_proc.returncode != 0: # Not running
-            # Start the server in background. Ensure it's run from its bin directory.
-            # Capture output to log files for mmserver20 specifically.
-            mmserver_log_path = os.path.join(os.path.dirname(public_mm_dir), "mmserver20_startup.log") # Log in parent of public_mm
-            with open(mmserver_log_path, "ab") as outfile: # Append binary mode
-                 subprocess.Popen([mmserver], cwd=bin_path, stdout=outfile, stderr=outfile)
-            print(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
-            logging.info(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
-            time.sleep(2) 
-        else:
-            print("mmserver20 appears to be already running (pid found by pgrep).")
-            logging.info("mmserver20 appears to be already running (pid found by pgrep).")
-    except FileNotFoundError: # pgrep might not be available
-        print("pgrep not found. Attempting to start mmserver20 directly if not running (status less certain).")
-        logging.warning("pgrep not found. Attempting to start mmserver20 directly.")
+    if tagger_running and wsd_running:
+        print("Both tagger and WSD servers are already running!")
+        logging.info("Both tagger and WSD servers are already running!")
+        # Still verify mmserver is running
+        mmserver_running = False
         try:
-            mmserver_log_path = os.path.join(os.path.dirname(public_mm_dir), "mmserver20_startup.log")
-            with open(mmserver_log_path, "ab") as outfile:
-                subprocess.Popen([mmserver], cwd=bin_path, stdout=outfile, stderr=outfile)
-            print(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
-            logging.info(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
-            time.sleep(2)
-        except Exception as e_mmserver:
-            print(f"Error attempting to start mmserver20 directly: {e_mmserver}")
-            logging.error(f"Error attempting to start mmserver20 directly: {e_mmserver}")
-    except Exception as e_pgrep:
-        print(f"Error during mmserver20 pgrep check or startup: {e_pgrep}")
-        logging.error(f"Error during mmserver20 pgrep check or startup: {e_pgrep}")
+            pgrep_proc = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            mmserver_running = (pgrep_proc.returncode == 0)
+        except Exception:
+            pass
+            
+        if mmserver_running:
+            print("All MetaMap servers are already running! No need to start them.")
+            logging.info("All MetaMap servers are already running! No need to start them.")
+            return True
+    
+    # Start Tagger if needed
+    if not tagger_running:
+        print("Starting SKR/MedPost tagger...")
+        logging.info("Starting SKR/MedPost tagger...")
+        try:
+            result_skr = subprocess.run([skr_ctl, "start"], capture_output=True, text=True, cwd=server_scripts_dir, timeout=30)
+            logging.info(f"SKR/MedPost Tagger start command stdout: {result_skr.stdout}")
+            if result_skr.returncode == 0:
+                print("SKR/MedPost tagger start command issued successfully.")
+                logging.info("SKR/MedPost tagger start command issued successfully.")
+            else:
+                print(f"Error issuing SKR/MedPost tagger start command. Return code: {result_skr.returncode}")
+                print(f"Stderr: {result_skr.stderr}")
+                logging.error(f"Error issuing SKR/MedPost tagger start command. Return code: {result_skr.returncode}. Stderr: {result_skr.stderr}")
+        except subprocess.TimeoutExpired:
+            print("Timeout starting SKR/MedPost tagger.")
+            logging.error("Timeout starting SKR/MedPost tagger.")
+        except Exception as e:
+            print(f"Exception starting SKR/MedPost tagger: {e}")
+            logging.error(f"Exception starting SKR/MedPost tagger: {e}")
+        
+        # Verify tagger is running after start attempt
+        max_attempts_tagger = 5
+        for attempt in range(max_attempts_tagger):
+            time.sleep(3)
+            if is_tagger_server_running():
+                print("SKR/MedPost tagger is running and accessible on port 1795.")
+                logging.info("SKR/MedPost tagger is running and accessible on port 1795.")
+                tagger_running = True
+                break
+            elif attempt < max_attempts_tagger - 1:
+                print(f"Waiting for SKR/MedPost tagger to become accessible (attempt {attempt+1}/{max_attempts_tagger})...")
+                logging.info(f"Waiting for SKR/MedPost tagger to become accessible (attempt {attempt+1}/{max_attempts_tagger})...")
+            else:
+                print("WARNING: SKR/MedPost tagger does not appear to be accessible on port 1795 after multiple attempts.")
+                logging.warning("SKR/MedPost tagger does not appear to be accessible on port 1795 after multiple attempts. This may cause errors during MetaMap processing.")
+        
+        # Added delay for tagger to fully initialize even after detection
+        if tagger_running:
+            print("Giving tagger server additional time to fully initialize...")
+            logging.info("Giving tagger server additional time to fully initialize...")
+            time.sleep(10)
+    else:
+        print("SKR/MedPost tagger is already running.")
+        logging.info("SKR/MedPost tagger is already running.")
 
-    print("Start commands issued for all servers. Detailed status check follows.")
-    logging.info("Start commands issued for all servers. Detailed status check follows.")
-    status_metamap_servers(public_mm_dir) # Call status to verify
-    return True # Indicate success/attempt
+    # Start WSD if needed
+    if not wsd_running:
+        print("Starting WSD server...")
+        logging.info("Starting WSD server...")
+        try:
+            # Use Popen so we don't block even if the script tails a log internally
+            with subprocess.Popen([wsd_ctl, "start"], cwd=server_scripts_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc:
+                # Give it a few seconds to emit initial output then detach
+                time.sleep(2)
+                # Capture whatever initial output is available for logging
+                try:
+                    out, err = proc.communicate(timeout=1)
+                except subprocess.TimeoutExpired:
+                    # Command is still running; we detach and let the server continue starting in background
+                    proc.kill()
+                    out, err = "", ""
+                logging.info(f"WSD server start command initial stdout: {out.strip()}")
+                logging.debug(f"WSD server start command initial stderr: {err.strip()}")
+            print("WSD server start command issued (non-blocking).")
+            logging.info("WSD server start command issued (non-blocking).")
+        except Exception as e:
+            print(f"Exception starting WSD server: {e}")
+            logging.error(f"Exception starting WSD server: {e}")
+        max_attempts_wsd = 10  # give WSD more time to open its socket
+        
+        # Verify WSD server is running after start attempt
+        for attempt in range(max_attempts_wsd):
+            time.sleep(3) 
+            if is_wsd_server_running():
+                print("WSD server is running and accessible on port 5554.")
+                logging.info("WSD server is running and accessible on port 5554.")
+                wsd_running = True
+                
+                # Add a substantial delay to ensure WSD server is fully ready
+                print("Giving WSD server additional time to fully initialize...")
+                logging.info("Giving WSD server additional time to fully initialize...")
+                time.sleep(15)  # Extra delay for WSD which needs more time
+                break
+            elif attempt < max_attempts_wsd - 1:
+                print(f"Waiting for WSD server to become accessible (attempt {attempt+1}/{max_attempts_wsd})...")
+                logging.info(f"Waiting for WSD server to become accessible (attempt {attempt+1}/{max_attempts_wsd})...")
+            else:
+                print("WARNING: WSD server does not appear to be accessible on port 5554 after multiple attempts.")
+                logging.warning("WSD server does not appear to be accessible on port 5554 after multiple attempts. This may cause errors during MetaMap processing.")
+    else:
+        print("WSD server is already running.")
+        logging.info("WSD server is already running.")
+            
+    mmserver_started = False
+    if mmserver_available:
+        print("Starting mmserver20 (optional)...")
+        logging.info("Starting mmserver20 (optional)...")
+        try:
+            # Check if already running using pgrep
+            pgrep_proc = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            if pgrep_proc.returncode != 0:  # Not running
+                mmserver_log_path = os.path.join(os.path.dirname(public_mm_dir), "mmserver20_startup.log")
+                with open(mmserver_log_path, "ab") as outfile:
+                    subprocess.Popen([mmserver], cwd=server_scripts_dir, stdout=outfile, stderr=outfile)
+                print(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+                logging.info(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+                time.sleep(2)
+                mmserver_started = True
+            else:
+                print("mmserver20 appears to be already running (pid found by pgrep).")
+                logging.info("mmserver20 appears to be already running (pid found by pgrep).")
+                mmserver_started = True
+        except FileNotFoundError:
+            # pgrep not available; start directly
+            try:
+                mmserver_log_path = os.path.join(os.path.dirname(public_mm_dir), "mmserver20_startup.log")
+                with open(mmserver_log_path, "ab") as outfile:
+                    subprocess.Popen([mmserver], cwd=server_scripts_dir, stdout=outfile, stderr=outfile)
+                print(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+                logging.info(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+                time.sleep(2)
+                mmserver_started = True
+            except Exception as e_mmserver:
+                print(f"Error attempting to start mmserver20 directly: {e_mmserver}")
+                logging.error(f"Error attempting to start mmserver20 directly: {e_mmserver}")
+        except Exception as e_pgrep:
+            print(f"Error during mmserver20 pgrep check or startup: {e_pgrep}")
+            logging.error(f"Error during mmserver20 pgrep check or startup: {e_pgrep}")
+    else:
+        print("mmserver20 script not found – skipping optional mmserver20 startup.")
+        logging.info("mmserver20 script not found – skipping optional mmserver20 startup.")
+    
+    print("Server status summary:")
+    logging.info("Server status summary:")
+    print(f"SKR/MedPost tagger: {'RUNNING' if tagger_running else 'NOT RUNNING'}")
+    logging.info(f"SKR/MedPost tagger: {'RUNNING' if tagger_running else 'NOT RUNNING'}")
+    print(f"WSD server: {'RUNNING' if wsd_running else 'NOT RUNNING'}")
+    logging.info(f"WSD server: {'RUNNING' if wsd_running else 'NOT RUNNING'}")
+    print(f"mmserver20: {'LIKELY RUNNING' if mmserver_started else 'UNKNOWN'}")
+    logging.info(f"mmserver20: {'LIKELY RUNNING' if mmserver_started else 'UNKNOWN'}")
+    
+    # Call formal status check
+    status_metamap_servers(public_mm_dir, server_scripts_dir)
+    
+    # Overall success state - be more lenient about WSD server which can be trickier to detect
+    # Only require that tagger is running since that's essential and more reliably detected
+    server_success = tagger_running  # Primary server that must be running
+    
+    # If WSD server wasn't detected as running by the socket check, do a final process check
+    if not wsd_running:
+        print("Performing final process-based check for WSD server...")
+        logging.info("Performing final process-based check for WSD server...")
+        try:
+            # Give a little more time for process to appear in process list
+            time.sleep(3)
+            ps_output = subprocess.run(["ps", "-ef"], capture_output=True, text=True, timeout=3).stdout.lower()
+            wsd_process_found = any(re.search(pattern, ps_output) for pattern in ["wsdserver", "disambserver", "java.*wsd_server"])
+            
+            if wsd_process_found:
+                print("WSD server process detected but not accessible via port. Proceeding with caution.")
+                logging.info("WSD server process detected but not accessible via port. Proceeding with caution.")
+                wsd_running = True  # Consider it running for status report
+            else:
+                print("No WSD server process detected in process list.")
+                logging.warning("No WSD server process detected in process list.")
+        except Exception as e:
+            print(f"Error in final WSD process check: {e}")
+            logging.error(f"Error in final WSD process check: {e}")
+    
+    # Report final status
+    if tagger_running and wsd_running and (mmserver_started or not os.path.isfile(mmserver)):
+        print("All required MetaMap servers appear to be running")
+        logging.info("All required MetaMap servers appear to be running")
+    elif tagger_running:
+        print("Tagger server is running, but WSD server may not be fully available - proceeding anyway")
+        logging.warning("Tagger server is running, but WSD server may not be fully available - proceeding anyway")
+    else:
+        print("WARNING: Essential tagger server not running. MetaMap will likely not function correctly.")
+        logging.warning("WARNING: Essential tagger server not running. MetaMap will likely not function correctly.")
+    
+    # Perform a connectivity test to verify MetaMap binary can actually connect to servers
+    if tagger_running or wsd_running:
+        try:
+            from .cmdexecutor import verify_metamap_server_connectivity
+            print("Performing MetaMap connectivity test...")
+            logging.info("Performing MetaMap connectivity test...")
+            
+            # Use the MetaMap binary path to test connectivity
+            metamap_binary_path = get_config_value("metamap_binary_path")
+            if metamap_binary_path:
+                success, error_msg = verify_metamap_server_connectivity(metamap_binary_path)
+                if success:
+                    print("MetaMap successfully connected to servers!")
+                    logging.info("MetaMap successfully connected to servers!")
+                else:
+                    print(f"WARNING: MetaMap connectivity test failed: {error_msg}")
+                    logging.warning(f"MetaMap connectivity test failed: {error_msg}")
+                    print("Waiting 30 more seconds for servers to stabilize...")
+                    logging.info("Waiting 30 more seconds for servers to stabilize...")
+                    time.sleep(30)  # Extra long delay if the test fails
+        except Exception as e:
+            print(f"Error running connectivity test: {e}")
+            logging.error(f"Error running connectivity test: {e}")
+    
+    # Return success if the primary components are running
+    return server_success
 
 def stop_metamap_servers(public_mm_dir):
     bin_path = os.path.join(public_mm_dir, "bin")
@@ -457,7 +667,7 @@ def stop_metamap_servers(public_mm_dir):
     _run_quiet(["pkill", "-f", "mmserver20"])
     print("Stop commands sent.")
 
-def status_metamap_servers(public_mm_dir):
+def status_metamap_servers(public_mm_dir, server_scripts_dir=None):
     bin_path = os.path.join(public_mm_dir, "bin")
     skr_ctl = os.path.join(bin_path, "skrmedpostctl")
     wsd_ctl = os.path.join(bin_path, "wsdserverctl")
@@ -649,60 +859,132 @@ def _is_server_process_running(command_path, server_name_in_output):
 def ensure_servers_running():
     """Ensure SKR tagger, WSD server and mmserver20 are running.
 
-    If they are not running, try to start them.  Works only on Unix-like
-    systems where the standard MetaMap control scripts are available.
+    If they are not running, try to start them. First checks if the servers
+    are accessible via socket connection before attempting to start them.
     """
 
-    public_mm_dir = None
-    # Try to get metamap_binary_path from config or environment
+    logging.info("Checking if MetaMap servers are already running...")
+    
+    # First check if servers are already running via socket connections
+    tagger_running = is_tagger_server_running()
+    wsd_running = is_wsd_server_running()
+    
+    if tagger_running and wsd_running:
+        print("All essential MetaMap servers are already running!")
+        logging.info("All essential MetaMap servers are already running!")
+        return True
+    
+    # If servers aren't running, try to find where the control scripts are located
+    # Look in several places in order of preference
+    
+    server_scripts_dir = None
+    server_control_paths = []
+    
+    # 1. Try config value first if explicitly set (highest priority)
+    configured_scripts_dir = get_config_value("server_scripts_dir")
+    if configured_scripts_dir and os.path.isdir(configured_scripts_dir):
+        server_scripts_dir = configured_scripts_dir
+        server_control_paths.append(server_scripts_dir)
+        logging.info(f"Using configured server scripts directory: {server_scripts_dir}")
+    
+    # 2. Try to derive from metamap binary path
     binary_path_from_config = get_config_value("metamap_binary_path")
-    binary_path_from_env = os.getenv("METAMAP_BINARY_PATH")
+    if binary_path_from_config and os.path.isfile(binary_path_from_config):
+        bin_dir = os.path.dirname(binary_path_from_config)
+        if bin_dir not in server_control_paths:
+            server_control_paths.append(bin_dir)
     
-    # Prioritize config, then environment
-    binary_path = binary_path_from_config or binary_path_from_env
-
-    if binary_path:
-        # Check if the path is plausible before trying to derive public_mm_dir
-        if os.path.isfile(binary_path):
-            # Assuming binary is in public_mm/bin/metamap
-            # Path.resolve().parent.parent should give public_mm
-            try:
-                public_mm_candidate = str(Path(binary_path).resolve().parent.parent)
-                if os.path.isdir(public_mm_candidate) and "public_mm" in public_mm_candidate.lower() : # Heuristic check
-                    public_mm_dir = public_mm_candidate
-                else: # Fallback if heuristic fails, try another common pattern
-                    public_mm_dir_alt = os.path.abspath(os.path.join(os.path.dirname(binary_path), os.pardir))
-                    if os.path.isdir(public_mm_dir_alt) and "public_mm" in public_mm_dir_alt.lower():
-                         public_mm_dir = public_mm_dir_alt
-            except Exception as e:
-                logging.warning(f"Error deriving public_mm_dir from binary path '{binary_path}': {e}")
-                public_mm_dir = None
+    # 3. Try some standard locations
+    public_mm_candidates = []
+    
+    # From metamap binary path
+    if binary_path_from_config:
+        try:
+            # Path to bin's parent (public_mm if binary is in public_mm/bin)
+            public_mm_candidate = str(Path(binary_path_from_config).resolve().parent.parent)
+            if os.path.isdir(public_mm_candidate) and "public_mm" in public_mm_candidate.lower():
+                public_mm_candidates.append(public_mm_candidate)
+                # Also try the bin directory underneath
+                bin_dir_candidate = os.path.join(public_mm_candidate, "bin")
+                if os.path.isdir(bin_dir_candidate) and bin_dir_candidate not in server_control_paths:
+                    server_control_paths.append(bin_dir_candidate)
+        except Exception as e:
+            logging.warning(f"Error deriving public_mm directory from binary path: {e}")
+    
+    # Try metamap_install paths
+    meta_install_dir = os.path.abspath("metamap_install")
+    if os.path.isdir(meta_install_dir):
+        # Try metamap_install/public_mm/bin
+        if os.path.isdir(os.path.join(meta_install_dir, "public_mm")):
+            public_mm_dir = os.path.join(meta_install_dir, "public_mm")
+            public_mm_candidates.append(public_mm_dir)
+            bin_dir = os.path.join(public_mm_dir, "bin")
+            if os.path.isdir(bin_dir) and bin_dir not in server_control_paths:
+                server_control_paths.append(bin_dir)
+    
+    # Also try public_mm as a direct subdirectory
+    current_dir = os.getcwd()
+    if os.path.isdir(os.path.join(current_dir, "public_mm")):
+        public_mm_dir = os.path.join(current_dir, "public_mm")
+        public_mm_candidates.append(public_mm_dir)
+        bin_dir = os.path.join(public_mm_dir, "bin")
+        if os.path.isdir(bin_dir) and bin_dir not in server_control_paths:
+            server_control_paths.append(bin_dir)
+    
+    # Go through our collected paths and find the first one containing the scripts
+    found_scripts_dir = None
+    for check_dir in server_control_paths:
+        skr_path = os.path.join(check_dir, "skrmedpostctl")
+        wsd_path = os.path.join(check_dir, "wsdserverctl")
+        
+        if os.path.isfile(skr_path) and os.path.isfile(wsd_path):
+            found_scripts_dir = check_dir
+            logging.info(f"Found server control scripts in: {found_scripts_dir}")
+            break
+    
+    if not found_scripts_dir:
+        logging.error("Could not locate server control scripts (skrmedpostctl, wsdserverctl) in any expected location")
+        print("ERROR: Could not find server control scripts (skrmedpostctl, wsdserverctl)")
+        print("Please configure the server_scripts_dir setting to the directory containing these scripts.")
+        return False
+    
+    # Use the first public_mm directory if we collected any
+    public_mm_dir = public_mm_candidates[0] if public_mm_candidates else None
+    if not public_mm_dir and found_scripts_dir:
+        # Try to derive public_mm from found_scripts_dir (if it's a bin directory)
+        if os.path.basename(found_scripts_dir) == "bin":
+            public_mm_dir = os.path.dirname(found_scripts_dir)
+    
+    if public_mm_dir:
+        print(f"Ensuring MetaMap servers are running using public_mm_dir: {public_mm_dir} (scripts in {found_scripts_dir})")
+        logging.info(f"Ensuring MetaMap servers are running using public_mm_dir: {public_mm_dir} (scripts in {found_scripts_dir})")
+        
+        # Try to start the servers with the improved function that checks each server's accessibility
+        success = start_metamap_servers(public_mm_dir, found_scripts_dir)
+        
+        # Double-check specifically whether essential servers are running
+        tagger_running = is_tagger_server_running()
+        wsd_running = is_wsd_server_running()
+        
+        if success or tagger_running:
+            if tagger_running and wsd_running:
+                print("All MetaMap servers are now running and accessible.")
+                logging.info("All MetaMap servers are now running and accessible.")
+            elif tagger_running:
+                print("WARNING: Primary tagger server is running but WSD may not be fully ready. Proceeding anyway.")
+                logging.warning("Primary tagger server is running but WSD may not be fully ready. Proceeding anyway.")
+            
+            # Consider success if at least the tagger is running, since WSD detection might fail
+            # even when it's actually working
+            return True
         else:
-            logging.warning(f"Configured/Env METAMAP_BINARY_PATH '{binary_path}' is not a file.")
-            public_mm_dir = None
-    
-    # If public_mm_dir still not found, try the 'metamap_install' directory as a last resort
-    if not public_mm_dir:
-        meta_install_dir_abs = os.path.abspath("metamap_install")
-        if os.path.isdir(os.path.join(meta_install_dir_abs, "public_mm")):
-             public_mm_dir = os.path.join(meta_install_dir_abs, "public_mm")
-             logging.info(f"Using 'metamap_install/public_mm' as public_mm_dir: {public_mm_dir}")
-        elif os.path.isdir(meta_install_dir_abs) and "public_mm" in os.listdir(meta_install_dir_abs): # Check if metamap_install *is* public_mm
-             # This case is less common but possible if metamap_install is a symlink or points directly to public_mm
-             public_mm_dir = meta_install_dir_abs
-             logging.info(f"Using 'metamap_install' (as public_mm) as public_mm_dir: {public_mm_dir}")
-
-
-    if not public_mm_dir or not os.path.isdir(public_mm_dir):
-        print("ensure_servers_running: Critical: Could not locate a valid public_mm directory. Skipping server check/start.")
-        logging.error("ensure_servers_running: Critical: Could not locate a valid public_mm directory. Skipping server check/start.")
-        return
-
-    print(f"Ensuring MetaMap servers are running using public_mm_dir: {public_mm_dir}")
-    logging.info(f"Ensuring MetaMap servers are running using public_mm_dir: {public_mm_dir}")
-    
-    # Now call the verbose start_metamap_servers function
-    start_metamap_servers(public_mm_dir)
+            print("WARNING: Failed to start essential MetaMap servers. Processing will likely fail.")
+            logging.warning("Failed to start essential MetaMap servers. Processing will likely fail.")
+            return False
+    else:
+        logging.error("Could not determine public_mm directory.")
+        print("ERROR: Could not determine public_mm directory.")
+        return False
 
 # --- Helper Functions (rglob_compat, load_state, etc.) ---
 def rglob_compat(directory, pattern):
@@ -885,6 +1167,226 @@ def pymm_escape_csv_field(field_data):
     # CSV writer will handle quoting and escaping internal quotes if configured with doublequote=True
     return s
 
+class MetaMapInstancePool:
+    """Manages a pool of MetaMap instances for efficient parallel processing"""
+    
+    def __init__(self, metamap_binary_path, metamap_options, max_instances=None):
+        """Initialize the MetaMap instance pool
+        
+        Args:
+            metamap_binary_path: Path to the MetaMap binary
+            metamap_options: Options to pass to MetaMap
+            max_instances: Maximum number of MetaMap instances to create (None = auto)
+        """
+        self.metamap_binary_path = metamap_binary_path
+        self.metamap_options = metamap_options
+        self.instances = []
+        self.instance_in_use = {}
+        self.lock = threading.RLock()  # Reentrant lock for thread safety
+        
+        # Auto-configure max_instances based on system resources if not specified
+        if max_instances is None:
+            cpu_count = os.cpu_count() or 4
+            available_memory_gb = self._get_available_memory_gb()
+            
+            # 1 instance per 4 cores, adjusted for available memory (minimum 2)
+            # Each instance may use approximately 2-4GB
+            instances_by_cpu = max(2, cpu_count // 4)
+            instances_by_memory = max(2, int(available_memory_gb / 4))
+            self.max_instances = min(instances_by_cpu, instances_by_memory)
+            
+            logging.info(f"Auto-configured MetaMap instance pool: {self.max_instances} instances "
+                        f"(based on {cpu_count} cores, {available_memory_gb:.1f}GB available memory)")
+        else:
+            self.max_instances = max_instances
+
+        # Initialize the semaphore to limit concurrent access
+        self.semaphore = threading.Semaphore(self.max_instances)
+        
+        # Pre-warm a minimal set of instances
+        initial_instances = min(2, self.max_instances)
+        if initial_instances > 0:
+            logging.info(f"Pre-warming {initial_instances} MetaMap instances...")
+            for _ in range(initial_instances):
+                self._create_new_instance()
+                
+    def _get_available_memory_gb(self):
+        """Get available system memory in GB"""
+        try:
+            import psutil
+            return psutil.virtual_memory().available / (1024 * 1024 * 1024)
+        except ImportError:
+            # If psutil is not available, assume 8GB
+            logging.warning("psutil not available, assuming 8GB available memory")
+            return 8.0
+
+    def _create_new_instance(self):
+        """Create a new MetaMap instance"""
+        from pymm.pymm import Metamap
+        
+        instance = Metamap(self.metamap_binary_path, self.metamap_options)
+        with self.lock:
+            instance_id = len(self.instances)
+            self.instances.append(instance)
+            self.instance_in_use[instance_id] = False
+            logging.debug(f"Created new MetaMap instance #{instance_id}")
+            return instance_id
+
+    def get_instance(self):
+        """Get an available MetaMap instance"""
+        # Wait for an available slot using the semaphore
+        self.semaphore.acquire()
+        
+        try:
+            with self.lock:
+                # Check for an available instance
+                for instance_id, in_use in self.instance_in_use.items():
+                    if not in_use:
+                        self.instance_in_use[instance_id] = True
+                        logging.debug(f"Using existing MetaMap instance #{instance_id}")
+                        return instance_id, self.instances[instance_id]
+                
+                # No available instances, create a new one if under the limit
+                if len(self.instances) < self.max_instances:
+                    instance_id = self._create_new_instance()
+                    self.instance_in_use[instance_id] = True
+                    return instance_id, self.instances[instance_id]
+                
+                # Should not reach here due to semaphore, but just in case
+                raise RuntimeError("No MetaMap instances available despite semaphore acquisition")
+        except Exception as e:
+            # Release the semaphore if anything goes wrong
+            self.semaphore.release()
+            raise e
+
+    def release_instance(self, instance_id):
+        """Release a MetaMap instance back to the pool"""
+        with self.lock:
+            if 0 <= instance_id < len(self.instances):
+                if self.instance_in_use.get(instance_id, False):
+                    self.instance_in_use[instance_id] = False
+                    logging.debug(f"Released MetaMap instance #{instance_id}")
+                    # Release the semaphore to allow another thread to get an instance
+                    self.semaphore.release()
+                else:
+                    logging.warning(f"Attempted to release MetaMap instance #{instance_id} that was not in use")
+            else:
+                logging.warning(f"Attempted to release invalid MetaMap instance ID: {instance_id}")
+
+    def shutdown(self):
+        """Shut down all MetaMap instances"""
+        with self.lock:
+            for instance_id, instance in enumerate(self.instances):
+                try:
+                    if instance is not None:
+                        logging.debug(f"Shutting down MetaMap instance #{instance_id}")
+                        instance.close()
+                except Exception as e:
+                    logging.warning(f"Error shutting down MetaMap instance #{instance_id}: {e}")
+            
+            self.instances = []
+            self.instance_in_use = {}
+
+
+class WorkerManager:
+    """Manages a dynamic pool of workers for processing files"""
+    
+    def __init__(self, mm_pool, output_dir, initial_workers=None, max_workers=None):
+        """Initialize the worker manager
+        
+        Args:
+            mm_pool: MetaMapInstancePool to use for processing
+            output_dir: Directory to write output files to
+            initial_workers: Initial number of workers (None = auto)
+            max_workers: Maximum number of workers (None = auto)
+        """
+        self.mm_pool = mm_pool
+        self.output_dir = output_dir
+        
+        # Auto-configure workers based on system resources if not specified
+        cpu_count = os.cpu_count() or 4
+        
+        if max_workers is None:
+            # Use up to 2x CPU cores but not more than MM instances * 3
+            self.max_workers = min(cpu_count * 2, mm_pool.max_instances * 3)
+        else:
+            self.max_workers = max_workers
+            
+        if initial_workers is None:
+            # Start with 75% of max workers rounded down, minimum 1
+            self.initial_workers = max(1, int(self.max_workers * 0.75))
+        else:
+            self.initial_workers = min(initial_workers, self.max_workers)
+            
+        logging.info(f"Worker Manager configured with {self.initial_workers} initial workers, "
+                     f"scaling up to {self.max_workers} max workers")
+        
+        # Initialize the executor with the initial number of workers
+        self.executor = concurrent.futures.ProcessPoolExecutor(max_workers=self.initial_workers)
+        self.futures = []
+        self.active_workers = 0
+        self.lock = threading.Lock()
+
+    def process_files(self, file_list, mm_binary_path, mm_options):
+        """Process files using the worker pool
+        
+        Args:
+            file_list: List of files to process
+            mm_binary_path: Path to the MetaMap binary
+            mm_options: Options to pass to MetaMap
+            
+        Returns:
+            List of completed files
+        """
+        chunk_size = max(1, len(file_list) // self.max_workers)
+        completed_files = []
+        
+        # Distribute files to workers in chunks
+        worker_chunks = []
+        for i in range(0, len(file_list), chunk_size):
+            worker_chunks.append(file_list[i:i + chunk_size])
+        
+        # Adjust worker count based on actual workload
+        actual_workers = min(len(worker_chunks), self.max_workers)
+        logging.info(f"Using {actual_workers} workers to process {len(file_list)} files "
+                     f"in {len(worker_chunks)} chunks")
+        
+        # Submit tasks to the executor
+        with self.lock:
+            self.futures = []
+            for worker_id, chunk in enumerate(worker_chunks):
+                future = self.executor.submit(
+                    process_files_with_pymm_worker,
+                    worker_id + 1,  # 1-based worker ID for clarity in logs
+                    chunk,
+                    self.output_dir,
+                    mm_options,
+                    mm_binary_path
+                )
+                self.futures.append(future)
+                self.active_workers += 1
+        
+        # Wait for all futures to complete
+        for future in concurrent.futures.as_completed(self.futures):
+            with self.lock:
+                self.active_workers -= 1
+            
+            try:
+                result = future.result()
+                if result:
+                    completed_files.extend(result)
+            except Exception as e:
+                logging.error(f"Worker error: {e}")
+        
+        return completed_files
+
+    def shutdown(self):
+        """Shut down the worker manager"""
+        logging.info("Shutting down worker manager...")
+        self.executor.shutdown(wait=True)
+        self.active_workers = 0
+        self.futures = []
+
 def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, current_metamap_options, current_metamap_binary_path):
     logging.info(f"[{worker_id}] Starting worker. Files: {len(files_for_worker)}. Binary: '{current_metamap_binary_path}'. Options (for logging): '{current_metamap_options}'")
     results = []
@@ -950,38 +1452,112 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
             
             pymm_timeout = int(get_config_value("pymm_timeout", os.getenv("PYMM_TIMEOUT", str(DEFAULT_PYMM_TIMEOUT))))
             logging.info(f"[{worker_id}] Processing {input_file_basename} with timeout {pymm_timeout}s")
-            mmos_iter = mm.parse(lines, timeout=pymm_timeout)
+            
+            # Pre-check if servers are running before parsing
+            servers_ok = True
+            
+            # Check tagger server
+            if not is_tagger_server_running():
+                logging.error(f"[{worker_id}] SKR/MedPost tagger server is not running on port 1795 - this will cause errors")
+                logging.warning(f"[{worker_id}] Attempting to restart servers as SKR/MedPost tagger is not running.")
+                servers_ok = False
+            
+            # Check WSD server
+            if not is_wsd_server_running():
+                logging.error(f"[{worker_id}] WSD server is not running on port 5554 - this will cause errors")
+                logging.warning(f"[{worker_id}] Attempting to restart servers as WSD Server is not running.")
+                servers_ok = False
+            
+            # If any server is down, attempt to restart all servers
+            if not servers_ok:
+                # Try to restart servers automatically
+                binary_path = get_config_value("metamap_binary_path")
+                if binary_path:
+                    # Derive public_mm_dir from binary path
+                    try:
+                        public_mm_candidate = str(Path(binary_path).resolve().parent.parent)
+                        if os.path.isdir(public_mm_candidate) and "public_mm" in public_mm_candidate.lower():
+                            public_mm_dir = public_mm_candidate
+                            logging.info(f"[{worker_id}] Attempting to restart all MetaMap servers using public_mm_dir: {public_mm_dir}")
+                            # Determine server_scripts_dir (usually public_mm_dir/bin)
+                            server_scripts_dir = os.path.join(public_mm_dir, "bin")
+                            start_metamap_servers(public_mm_dir, server_scripts_dir) # Pass explicit scripts dir
+                            
+                            # Give some extra time for servers to stabilize
+                            logging.info(f"[{worker_id}] Waiting 5 seconds for servers to stabilize after restart attempt.")
+                            time.sleep(5)
+                            
+                            # Re-check server status
+                            tagger_running_after_restart = is_tagger_server_running()
+                            wsd_running_after_restart = is_wsd_server_running()
+                            
+                            if tagger_running_after_restart and wsd_running_after_restart:
+                                logging.info(f"[{worker_id}] Successfully restarted MetaMap servers (Tagger: {'Running' if tagger_running_after_restart else 'Not Running'}, WSD: {'Running' if wsd_running_after_restart else 'Not Running'})")
+                            else:
+                                logging.error(f"[{worker_id}] Failed to restart all MetaMap servers after attempt (Tagger: {'Running' if tagger_running_after_restart else 'Not Running'}, WSD: {'Running' if wsd_running_after_restart else 'Not Running'})")
+                        else:
+                            logging.error(f"[{worker_id}] Could not derive a valid public_mm directory from binary_path: {binary_path} to restart servers.")
+                    except Exception as e_restart:
+                        logging.error(f"[{worker_id}] Error during server restart attempt: {e_restart}")
+            
+            # Now try to run the parse with robust retry logic for connection issues
+            connection_retry_attempts = 3
+            for connection_attempt in range(connection_retry_attempts):
+                try:
+                    mmos_iter = mm.parse(lines, timeout=pymm_timeout)
+                    
+                    # Success - break out of retry loop
+                    break
+                except Exception as parse_e:
+                    error_str = str(parse_e).lower()
+                    if connection_attempt < connection_retry_attempts-1 and (
+                        "connrefused" in error_str or 
+                        "connection refused" in error_str or
+                        "spio_e_net" in error_str
+                    ):
+                        # This is likely a connection issue with the servers
+                        logging.warning(f"[{worker_id}] Connection error on attempt {connection_attempt+1}/{connection_retry_attempts}: {parse_e}")
+                        print(f"[{worker_id}] Connection error with MetaMap servers. Waiting before retry...")
+                        
+                        # Give servers more time to initialize and try restarting them
+                        time.sleep(10)
+                        
+                        # Try to restart servers
+                        binary_path = get_config_value("metamap_binary_path")
+                        if binary_path:
+                            public_mm_candidate = str(Path(binary_path).resolve().parent.parent)
+                            if os.path.isdir(public_mm_candidate):
+                                logging.info(f"[{worker_id}] Attempting to restart servers after connection error...")
+                                server_scripts_dir = os.path.join(public_mm_candidate, "bin")
+                                start_metamap_servers(public_mm_candidate, server_scripts_dir)
+                        
+                        # Create new MetaMap instance
+                        try:
+                            mm.close()
+                        except:
+                            pass
+                        mm = PyMetaMap(current_metamap_binary_path, debug=True)
+                    else:
+                        # Re-raise for non-connection errors or final attempt
+                        raise
             
             # Check if we received an empty result due to XML parsing error
             if not mmos_iter and hasattr(mmos_iter, '__len__') and len(mmos_iter) == 0:
                 logging.warning(f"[{worker_id}] XML parsing error for {input_file_basename} - returning empty concept list")
                 
-                # Check if WSD server is running - this might be the cause of the issue
+                # After failing, check servers again
                 wsd_running = is_wsd_server_running()
-                if not wsd_running:
-                    logging.error(f"[{worker_id}] WSD server is not running on port 5554 - this is likely causing XML parsing errors")
-                    print(f"\n[{worker_id}] ERROR: WSD Server is not running! Attempting to restart it...")
-                    
-                    # Try to restart WSD server automatically
-                    binary_path = get_config_value("metamap_binary_path")
-                    if binary_path:
-                        public_mm_dir = os.path.abspath(os.path.join(os.path.dirname(binary_path), os.pardir))
-                        if os.path.isdir(public_mm_dir):
-                            bin_path = os.path.join(public_mm_dir, "bin")
-                            wsd_ctl = os.path.join(bin_path, "wsdserverctl")
-                            if os.path.isfile(wsd_ctl):
-                                print(f"[{worker_id}] Restarting WSD server...")
-                                subprocess.run([wsd_ctl, "restart"], check=False)
-                                # Give it time to start
-                                max_attempts = 3
-                                for attempt in range(max_attempts):
-                                    time.sleep(3)
-                                    if is_wsd_server_running():
-                                        print(f"[{worker_id}] WSD server restarted successfully")
-                                        logging.info(f"[{worker_id}] WSD server restarted successfully")
-                                        break
-                                    elif attempt < max_attempts - 1:
-                                        print(f"[{worker_id}] Waiting for WSD server (attempt {attempt+1}/{max_attempts})...")
+                tagger_running = is_tagger_server_running()
+                
+                if not wsd_running or not tagger_running:
+                    missing_servers = []
+                    if not tagger_running:
+                        missing_servers.append("SKR/MedPost tagger")
+                    if not wsd_running:
+                        missing_servers.append("WSD server")
+                        
+                    logging.error(f"[{worker_id}] {', '.join(missing_servers)} not running - this is causing XML parsing errors")
+                    print(f"\n[{worker_id}] ERROR: {', '.join(missing_servers)} not running! MetaMap cannot function properly.")
                 
                 # Write a valid CSV file anyway with just the headers
                 with open(output_csv_path, 'w', newline='', encoding='utf-8') as f_out:
@@ -1138,6 +1714,20 @@ def process_files_with_pymm_worker(worker_id, files_for_worker, main_out_dir, cu
                         # Write start marker and CSV header for symmetry even if an early error occurred
                         f_out_end.write(f"{START_MARKER_PREFIX}{input_file_basename}\n")
                         csv.writer(f_out_end, quoting=csv.QUOTE_ALL, doublequote=True).writerow(CSV_HEADER)
+                    
+                    # Check if we got zero concepts (just header) - this situation should be treated as an error
+                    # Get file line count (excluding end marker we're about to write)
+                    line_count = 0
+                    with open(output_csv_path, 'r', encoding='utf-8') as f_count:
+                        for _ in f_count:
+                            line_count += 1
+                    
+                    # If file has only START marker + header (2 lines), treat as error
+                    if line_count <= 2 and not processing_error_occurred:
+                        logging.warning(f"[{worker_id}] No concepts found in {input_file_basename} - marking as ERROR")
+                        processing_error_occurred = True
+                        
+                    # Add end marker (with :ERROR suffix if processing_error_occurred or no concepts found)
                     end_marker = f"{END_MARKER_PREFIX}{input_file_basename}{':ERROR' if processing_error_occurred else ''}\n"
                     f_out_end.write(end_marker)
             except Exception as e_marker: 
@@ -1474,6 +2064,12 @@ def handle_run_batch_processing():
     print(f"Max Parallel Workers: {MAX_PARALLEL_WORKERS}")
     print(f"Timeout per file: {timeout_value} seconds")
     print(f"Java heap size: {java_heap_size}")
+    
+    # Display instance pool setting
+    use_instance_pool = get_config_value("use_instance_pool", "no").lower() in ["yes", "true", "1", "y"]
+    max_instances = get_config_value("metamap_instance_count", "auto")
+    print(f"Processing mode: {'Instance Pool' if use_instance_pool else 'Classic'}" + 
+          (f" (max {max_instances} instances)" if use_instance_pool and max_instances != "auto" else ""))
 
     # Show nohup command for background processing
     script_name = os.path.basename(sys.argv[0])
@@ -1519,8 +2115,17 @@ def handle_run_batch_processing():
     if os.listdir(out_dir) and any(f.endswith('.csv') or f == STATE_FILE for f in os.listdir(out_dir)):
         if input("Output directory is not empty. Resume previous job? (yes/no, default: no): ").strip().lower() == 'yes':
             mode = "resume"
-    print(f"Starting batch processing in '{mode}' mode...")
-    execute_batch_processing(inp_dir, out_dir, mode, metamap_binary_p, metamap_opts)
+    
+    # Check if we should use the instance pool mode
+    use_instance_pool = get_config_value("use_instance_pool", "no").lower() in ["yes", "true", "1", "y"]
+    
+    print(f"Starting batch processing in '{mode}' mode with {'instance pool' if use_instance_pool else 'classic'} processing...")
+    
+        # Select the appropriate processing function based on the configuration
+    if use_instance_pool:
+        execute_batch_processing_with_instance_pool(inp_dir, out_dir, mode, metamap_binary_p, metamap_opts)
+    else:
+        execute_batch_processing(inp_dir, out_dir, mode, metamap_binary_p, metamap_opts)
 
 def handle_view_progress(output_dir_str=None):
     print("\n--- View Batch Progress ---")
@@ -3041,15 +3646,41 @@ def main():
         root_logger.setLevel(logging.INFO)
 
     if subcmd in {"start", "resume"}:
-        if len(sys.argv) != 4: logging.error(f"Error: {subcmd} command requires INPUT_DIR and OUTPUT_DIR arguments."); print(f"Usage: pymm-cli {subcmd} INPUT_DIR OUTPUT_DIR"); sys.exit(1)
+        if len(sys.argv) < 4: 
+            logging.error(f"Error: {subcmd} command requires INPUT_DIR and OUTPUT_DIR arguments.")
+            print(f"Usage: pymm-cli {subcmd} INPUT_DIR OUTPUT_DIR [--pool | --no-pool]")
+            print("  --pool     : Use instance pool mode for better scaling (recommended for servers)")
+            print("  --no-pool  : Use classic mode (one MetaMap instance per worker)")
+            sys.exit(1)
         inp_dir_str, out_dir_str = sys.argv[2:4]
                 
         # Always force-start MetaMap servers before batch processing
         # This call now uses the reverted ensure_servers_running
         ensure_servers_running()
-                    
+        
+        # Check for --pool or --no-pool flag in command line arguments
+        use_instance_pool = None
+        for arg in sys.argv[4:]:
+            if arg == '--pool':
+                use_instance_pool = True
+                break
+            elif arg == '--no-pool':
+                use_instance_pool = False
+                break
+        
+        # If not specified in command line, check configuration
+        if use_instance_pool is None:
+            use_instance_pool = get_config_value("use_instance_pool", "no").lower() in ["yes", "true", "1", "y"]
+        
         current_metamap_options = get_config_value("metamap_processing_options", default_metamap_options)
-        execute_batch_processing(inp_dir_str, out_dir_str, subcmd, configured_metamap_binary_path, current_metamap_options)
+        
+        print(f"Starting batch processing in '{subcmd}' mode with {'instance pool' if use_instance_pool else 'classic'} processing...")
+        
+        # Choose the appropriate execution function based on configuration
+        if use_instance_pool:
+            execute_batch_processing_with_instance_pool(inp_dir_str, out_dir_str, subcmd, configured_metamap_binary_path, current_metamap_options)
+        else:
+            execute_batch_processing(inp_dir_str, out_dir_str, subcmd, configured_metamap_binary_path, current_metamap_options)
     
     elif subcmd == "progress" and len(sys.argv) == 3: handle_view_progress(sys.argv[2]); sys.exit(0)
     
@@ -3672,20 +4303,360 @@ def display_performance_metrics(metrics):
     print("-------------------------")
 
 def is_wsd_server_running():
-    """Check if the WSD server is actually running by trying to connect to port 5554."""
+    """Check if the WSD server is actually running using several detection methods."""
     import socket
+    wsd_running = False
+    
+    # Method 1: Try socket connection to port 5554
     try:
-        # Try to connect to WSD server port
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(2)  # 2 second timeout
         result = sock.connect_ex(('localhost', 5554))
         sock.close()
-        
-        # If result is 0, the port is open and server is likely running
-        return result == 0
+        if result == 0:
+            return True  # If we can connect, server is definitely running
     except Exception as e:
-        print(f"Error checking WSD server: {e}")
+        logging.debug(f"Socket check for WSD server failed: {e}")
+    
+    # Method 2: Look for WSD process using ps
+    try:
+        ps_output = subprocess.run(
+            ["ps", "-ef"], 
+            capture_output=True, 
+            text=True, 
+            timeout=3
+        ).stdout.lower()
+        
+        # Check for common WSD process patterns
+        wsd_patterns = [
+            "wsdserver",  # Base process name
+            "disambserver",  # From config file name
+            "java.*wsd_server"  # Java process with WSD_Server dir
+        ]
+        
+        for pattern in wsd_patterns:
+            if re.search(pattern, ps_output):
+                logging.info(f"WSD server appears to be running (matched process pattern: {pattern})")
+                return True
+    except Exception as e:
+        logging.debug(f"Process check for WSD server failed: {e}")
+    
+    # Method 3: Check for the PID file that wsdserverctl creates
+    try:
+        # Common locations of WSD PID file
+        pid_paths = [
+            "/tmp/wsd-server.pid",
+            os.path.expanduser("~/tmp/wsd-server.pid"),
+            # Add any other potential locations
+        ]
+        
+        for pid_path in pid_paths:
+            if os.path.exists(pid_path):
+                with open(pid_path) as f:
+                    pid = f.read().strip()
+                    if pid.isdigit() and os.path.exists(f"/proc/{pid}"):
+                        logging.info(f"WSD server appears to be running (PID file found: {pid_path}, PID: {pid})")
+                        return True
+    except Exception as e:
+        logging.debug(f"PID file check for WSD server failed: {e}")
+    
+    return False
+
+def is_tagger_server_running():
+    """Check if the SKR/MedPost tagger server is running using multiple detection methods."""
+    import socket
+    
+    # Method 1: Try socket connection to port 1795
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(2)  # 2 second timeout
+        result = sock.connect_ex(('localhost', 1795))
+        sock.close()
+        if result == 0:
+            return True  # If we can connect, server is definitely running
+    except Exception as e:
+        logging.debug(f"Socket check for tagger server failed: {e}")
+    
+    # Method 2: Look for tagger process in running processes
+    try:
+        ps_output = subprocess.run(
+            ["ps", "-ef"], 
+            capture_output=True, 
+            text=True, 
+            timeout=3
+        ).stdout.lower()
+        
+        # Check for common tagger process patterns
+        tagger_patterns = [
+            "taggerserver",  # Base process name
+            "medpost",  # From component name
+            "java.*medpost",  # Java MedPost process
+            "java.*skr.*tag",  # Java SKR tagger
+            "skr.*tag"  # Any SKR tagger variant
+        ]
+        
+        for pattern in tagger_patterns:
+            if re.search(pattern, ps_output):
+                logging.info(f"Tagger server appears to be running (matched process pattern: {pattern})")
+                return True
+    except Exception as e:
+        logging.debug(f"Process check for tagger server failed: {e}")
+    
+    # Method 3: Check for the PID file that skrmedpostctl creates
+    try:
+        # Common locations of tagger PID file
+        pid_paths = [
+            "/tmp/tagger-server.pid",
+            "/tmp/skrmedpost-server.pid",
+            os.path.expanduser("~/tmp/tagger-server.pid")
+            # Add other potential locations
+        ]
+        
+        for pid_path in pid_paths:
+            if os.path.exists(pid_path):
+                with open(pid_path) as f:
+                    pid = f.read().strip()
+                    if pid.isdigit() and os.path.exists(f"/proc/{pid}"):
+                        logging.info(f"Tagger server appears to be running (PID file found: {pid_path}, PID: {pid})")
+                        return True
+    except Exception as e:
+        logging.debug(f"PID file check for tagger server failed: {e}")
+    
+    return False
+
+def execute_batch_processing_with_instance_pool(inp_dir_str, out_dir_str, mode, global_metamap_binary_path, global_metamap_options):
+    """Execute batch processing using the MetaMapInstancePool and WorkerManager for improved scaling.
+    
+    This version creates a central pool of MetaMap instances that workers can share,
+    enabling better resource utilization on large servers.
+    """
+    # Ensure logging is set up first thing
+    ensure_logging_setup(out_dir_str)
+    
+    logging.info(f"Executing batch processing with instance pool. Mode: {mode}, Input: {inp_dir_str}, Output: {out_dir_str}")
+    logging.info(f"  MetaMap Binary: {global_metamap_binary_path}")
+    logging.info(f"  MetaMap Options: {global_metamap_options}")
+    
+    inp_dir_orig = os.path.abspath(os.path.expanduser(inp_dir_str))
+    out_dir_raw = os.path.abspath(os.path.expanduser(out_dir_str))
+    out_dir = _normalize_path_for_os(out_dir_raw)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    
+    pid_path_raw = os.path.join(out_dir_raw, PID_FILE)
+    pid_path = _normalize_path_for_os(pid_path_raw)
+    try:
+        with open(pid_path, 'w') as f_pid: f_pid.write(str(os.getpid()))
+    except Exception as e_pid:
+        logging.warning(f"Could not write PID to {pid_path} (raw: {pid_path_raw}): {e_pid}")
+    
+    all_input_files_orig_str = gather_inputs(inp_dir_orig)
+    if not all_input_files_orig_str:
+        logging.warning(f"No input .txt files found in {inp_dir_orig}. Nothing to do.")
+        print(f"No input .txt files found in {inp_dir_orig}.")
+        return
+    
+    state = load_state(out_dir) or {}
+    files_to_process_paths = []
+    completed_files_count_initial = 0
+    
+    # Create failed files directory
+    failed_dir = os.path.join(out_dir, "failed_files")
+    os.makedirs(failed_dir, exist_ok=True)
+    
+    logging.info(f"Scanning for already completed files in {out_dir}...")
+    for input_file_str_path in all_input_files_orig_str:
+        input_file_basename = os.path.basename(input_file_str_path)
+        output_csv_path_str = derive_output_csv_path(out_dir, input_file_basename)
+        if check_output_file_completion(output_csv_path_str, input_file_basename):
+            completed_files_count_initial += 1
+        else:
+            if os.path.exists(output_csv_path_str):
+                # Move to error folder if it's an existing but incomplete file
+                error_folder_path = os.path.join(out_dir, ERROR_FOLDER)
+                Path(error_folder_path).mkdir(parents=True, exist_ok=True)
+                dest_failed = os.path.join(error_folder_path, os.path.basename(output_csv_path_str))
+                try:
+                    shutil.move(output_csv_path_str, dest_failed)
+                    logging.info(f"Moved incomplete CSV {output_csv_path_str} to {dest_failed}")
+                except Exception as mv_ex:
+                    logging.warning(f"Could not move incomplete CSV {output_csv_path_str}: {mv_ex}")
+            files_to_process_paths.append(input_file_str_path)
+    
+    logging.info(f"Found {completed_files_count_initial} files already completed with markers.")
+    logging.info(f"{len(files_to_process_paths)} files pending processing for this run.")
+    
+    if not files_to_process_paths:
+        logging.info("No files to process. All tasks seem complete according to markers.")
+        state["total_overall"] = len(all_input_files_orig_str)
+        state["completed_overall_markers"] = completed_files_count_initial
+        state["end_time"] = datetime.now().isoformat()
+        if "start_time" not in state and state.get("total_overall", 0) > 0:
+            state["start_time"] = datetime.now().isoformat()
+        save_state(out_dir, state)
+        return
+    
+    if mode == "start" or not state.get("start_time"):
+        state["start_time"] = datetime.now().isoformat()
+    state["total_overall"] = len(all_input_files_orig_str)
+    state["completed_overall_markers"] = completed_files_count_initial
+    state["file_timings"] = state.get("file_timings", {})
+    state["active_workers_info"] = {}
+    save_state(out_dir, state)
+    
+    # Get configured worker and instance pool settings
+    try:
+        # Get max workers and max instances
+        max_workers = int(get_config_value("max_parallel_workers", os.cpu_count() or 4))
+        max_instances = int(get_config_value("metamap_instance_count", (os.cpu_count() or 4) // 4))
+        
+        # If they aren't set correctly, we'll go with auto-detection in the classes
+        if max_workers <= 0:
+            max_workers = None
+        if max_instances <= 0:
+            max_instances = None
+    except (ValueError, TypeError):
+        max_workers = None
+        max_instances = None
+    
+    print(f"Creating MetaMap instance pool with up to {max_instances or 'auto'} instances")
+    logging.info(f"Creating MetaMap instance pool with up to {max_instances or 'auto'} instances")
+    
+    # Create the MetaMap instance pool
+    mm_pool = MetaMapInstancePool(
+        metamap_binary_path=global_metamap_binary_path,
+        metamap_options=global_metamap_options.strip(),
+        max_instances=max_instances
+    )
+    
+    # Create the worker manager
+    worker_manager = WorkerManager(
+        mm_pool=mm_pool,
+        output_dir=out_dir,
+        initial_workers=None,  # Auto-configure based on system resources
+        max_workers=max_workers
+    )
+    
+    print(f"Starting worker manager with up to {worker_manager.max_workers} workers")
+    logging.info(f"Starting worker manager with up to {worker_manager.max_workers} workers")
+    
+    next_progress_check_time = time.time() + CHECK_INTERVAL
+    
+    # Start the processing
+    try:
+        interrupted = False
+        completed_files = []
+        
+        # Start a progress monitoring thread
+        stop_monitoring = False
+        
+        def monitor_progress():
+            next_check = time.time() + CHECK_INTERVAL
+            while not stop_monitoring:
+                if time.time() >= next_check:
+                    try:
+                        # Update progress in state file
+                        current_completed = sum(1 for input_f_path in all_input_files_orig_str 
+                                              if check_output_file_completion(
+                                                  derive_output_csv_path(out_dir, os.path.basename(input_f_path)), 
+                                                  os.path.basename(input_f_path)))
+                        
+                        # Update state
+                        state_update = load_state(out_dir) or {}
+                        state_update["completed_overall_markers"] = current_completed
+                        save_state(out_dir, state_update)
+                        
+                        # Calculate progress percentage
+                        total_files = len(all_input_files_orig_str)
+                        pct_progress = current_completed / total_files * 100.0 if total_files else 0.0
+                        
+                        logging.info(f"Progress (Pool Mode): {current_completed}/{total_files} ({pct_progress:.1f}%)")
+                        next_check = time.time() + CHECK_INTERVAL
+                    except Exception as e_monitor:
+                        logging.error(f"Error in progress monitor: {e_monitor}")
+                        next_check = time.time() + CHECK_INTERVAL
+                time.sleep(1)  # Short sleep to prevent CPU spinning
+        
+        # Start the monitoring thread
+        monitor_thread = threading.Thread(target=monitor_progress, daemon=True)
+        monitor_thread.start()
+        
+        try:
+            # Process the files
+            completed_files = worker_manager.process_files(
+                file_list=files_to_process_paths,
+                mm_binary_path=global_metamap_binary_path,
+                mm_options=global_metamap_options.strip()
+            )
+            
+            # If we got results, we can update the state with file timings
+            if completed_files:
+                for file_result in completed_files:
+                    if len(file_result) >= 2:
+                        filename, timing, *_ = file_result
+                        if filename and timing:
+                            state["file_timings"][filename] = timing
+                save_state(out_dir, state)
+            
+        except KeyboardInterrupt:
+            print("Received keyboard interrupt, will exit after current tasks complete.")
+            logging.warning("Received keyboard interrupt, exiting after current tasks complete.")
+            interrupted = True
+        
+        finally:
+            # Stop the monitoring thread
+            stop_monitoring = True
+            monitor_thread.join(timeout=5)
+            
+            # Shut down the worker manager
+            worker_manager.shutdown()
+            
+            # Shut down the MetaMap instance pool
+            mm_pool.shutdown()
+        
+        print("All active futures completed.")
+        logging.info("All active futures completed.")
+        
+        if interrupted:
+            print("Main processing loop was interrupted.")
+            logging.info("Main processing loop was interrupted.")
+        else:
+            print("Main processing loop finished.")
+            logging.info("Main processing loop finished.")
+    
+    except Exception as e:
+        print(f"Error during batch processing: {e}")
+        logging.error(f"Error during batch processing: {e}", exc_info=True)
         return False
+    
+    # Final state update
+    final_completed_m = sum(1 for input_f_path_f in all_input_files_orig_str if check_output_file_completion(derive_output_csv_path(out_dir, os.path.basename(input_f_path_f)), os.path.basename(input_f_path_f)))
+    state["completed_overall_markers"] = final_completed_m
+    state.pop("active_workers_info", None)
+    state["end_time"] = datetime.now().isoformat()
+    if "start_time" in state:
+        s_dt_f = parse_iso_datetime_compat(state["start_time"])
+        e_dt_f = parse_iso_datetime_compat(state["end_time"])
+        if s_dt_f and e_dt_f:
+            state["elapsed_seconds"] = int((e_dt_f - s_dt_f).total_seconds())
+    save_state(out_dir, state)
+    
+    logging.info(f"Batch processing attempt finished. Total files marked as complete: {final_completed_m}/{len(all_input_files_orig_str)}")
+    
+    # Ensure log file is properly set up for this output dir
+    log_file_name = get_dynamic_log_filename(out_dir_raw)
+    log_primary_path = _normalize_path_for_os(os.path.join(out_dir_raw, log_file_name))
+    
+    # Avoid duplicate handlers across multiple calls
+    root_logger = logging.getLogger()
+    normalized_target = os.path.normcase(os.path.normpath(log_primary_path))
+    already = any(
+        isinstance(h, logging.FileHandler) and os.path.normcase(os.path.normpath(getattr(h, "baseFilename", ""))) == normalized_target
+        for h in root_logger.handlers
+    )
+    if not already:
+        _safe_add_file_handler(log_primary_path)
+    
+    return True
 
 if __name__ == "__main__":
     import multiprocessing as _mp

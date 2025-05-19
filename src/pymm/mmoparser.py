@@ -8,6 +8,7 @@ from xml.dom.minidom import parse as parse_xml
 candidate_mapping = {
     "score": "CandidateScore",
     "cui": "CandidateCUI",
+    "pref_name": "CandidatePreferredName",
     "semtypes": "SemType",
     "sources": "Source",
     "ismapping": None,
@@ -259,6 +260,7 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
         return cls(
             cui=get_data(candidate, candidate_mapping['cui']),
             score=get_data(candidate, candidate_mapping['score']),
+            pref_name=get_data(candidate, candidate_mapping['pref_name']),
             matched=get_data(candidate, candidate_mapping['matched']),
             semtypes=[
                 st.childNodes[0].data if st.childNodes else ""
@@ -306,6 +308,14 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
         if zero_based:
             return (self.pos_start0, self.pos_end0)
         return (self.pos_start, None if self.pos_length is None else self.pos_start + self.pos_length - 1)
+
+    @property
+    def phrase_pos_str(self):
+        """0-based start:length string for the phrase, or empty string."""
+        if self.phrase_start is not None and self.phrase_length is not None:
+            # phrase_start is 1-based, convert to 0-based for this string format
+            return f"{self.phrase_start - 1}:{self.phrase_length}"
+        return ""
 
 
 class MMOS:

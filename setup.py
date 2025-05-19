@@ -6,7 +6,7 @@ __copyright__ = "Srikanth Mujjiga"
 __license__ = "mit"
 
 import sys
-from setuptools import setup
+from setuptools import setup, find_packages
 
 entry_points = {
     'console_scripts': [
@@ -17,9 +17,21 @@ entry_points = {
 def setup_package():
     needs_sphinx = {'build_sphinx', 'upload_docs'}.intersection(sys.argv)
     sphinx = ['sphinx'] if needs_sphinx else []
-    setup(setup_requires=['pyscaffold>=3.0a0,<3.1a0'] + sphinx,
-          entry_points=entry_points,
-          use_pyscaffold=True)
+    
+    setup(
+        name="pythonmetamap",
+        version="0.5.0",
+        packages=find_packages(where="src", exclude=["*.tests", "*.tests.*", "tests.*", "tests", "*.__pycache__", "__pycache__", "*.pyc"]),
+        package_dir={"": "src"},
+        install_requires=[
+            "psutil>=5.9.0",
+            "colorama>=0.4.4",
+            "tqdm>=4.64.0",
+            "rich>=12.0.0",
+        ],
+        entry_points=entry_points,
+        include_package_data=True,
+    )
 
 if __name__ == "__main__":
     setup_package()
