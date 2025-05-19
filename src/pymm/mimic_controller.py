@@ -437,18 +437,20 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
         print("Both tagger and WSD servers are already running!")
         logging.info("Both tagger and WSD servers are already running!")
         # Still verify mmserver is running
-        mmserver_running = False
+        mmserver_running_pgrep = False
         try:
             pgrep_proc = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            mmserver_running = (pgrep_proc.returncode == 0)
+            mmserver_running_pgrep = (pgrep_proc.returncode == 0)
         except Exception:
-            pass
+            pass # pgrep might not be available or other error
             
-        if mmserver_running:
-            print("All MetaMap servers are already running! No need to start them.")
-            logging.info("All MetaMap servers are already running! No need to start them.")
+        if mmserver_running_pgrep:
+            print("All MetaMap servers (Tagger, WSD, mmserver20 via pgrep) are already running! No need to start them.")
+            logging.info("All MetaMap servers (Tagger, WSD, mmserver20 via pgrep) are already running! No need to start them.")
             return True
     
+    servers_started_this_run = False
+
     # Start Tagger if needed
     if not tagger_running:
         print("Starting SKR/MedPost tagger...")
@@ -459,6 +461,7 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
             if result_skr.returncode == 0:
                 print("SKR/MedPost tagger start command issued successfully.")
                 logging.info("SKR/MedPost tagger start command issued successfully.")
+                servers_started_this_run = True
             else:
                 print(f"Error issuing SKR/MedPost tagger start command. Return code: {result_skr.returncode}")
                 print(f"Stderr: {result_skr.stderr}")
@@ -469,28 +472,6 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
         except Exception as e:
             print(f"Exception starting SKR/MedPost tagger: {e}")
             logging.error(f"Exception starting SKR/MedPost tagger: {e}")
-        
-        # Verify tagger is running after start attempt
-        max_attempts_tagger = 5
-        for attempt in range(max_attempts_tagger):
-            time.sleep(3)
-            if is_tagger_server_running():
-                print("SKR/MedPost tagger is running and accessible on port 1795.")
-                logging.info("SKR/MedPost tagger is running and accessible on port 1795.")
-                tagger_running = True
-                break
-            elif attempt < max_attempts_tagger - 1:
-                print(f"Waiting for SKR/MedPost tagger to become accessible (attempt {attempt+1}/{max_attempts_tagger})...")
-                logging.info(f"Waiting for SKR/MedPost tagger to become accessible (attempt {attempt+1}/{max_attempts_tagger})...")
-            else:
-                print("WARNING: SKR/MedPost tagger does not appear to be accessible on port 1795 after multiple attempts.")
-                logging.warning("SKR/MedPost tagger does not appear to be accessible on port 1795 after multiple attempts. This may cause errors during MetaMap processing.")
-        
-        # Added delay for tagger to fully initialize even after detection
-        if tagger_running:
-            print("Giving tagger server additional time to fully initialize...")
-            logging.info("Giving tagger server additional time to fully initialize...")
-            time.sleep(10)
     else:
         print("SKR/MedPost tagger is already running.")
         logging.info("SKR/MedPost tagger is already running.")
@@ -500,55 +481,30 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
         print("Starting WSD server...")
         logging.info("Starting WSD server...")
         try:
-            # Use Popen so we don't block even if the script tails a log internally
             with subprocess.Popen([wsd_ctl, "start"], cwd=server_scripts_dir, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as proc:
-                # Give it a few seconds to emit initial output then detach
-                time.sleep(2)
-                # Capture whatever initial output is available for logging
+                time.sleep(2) # Brief moment for initial output
                 try:
                     out, err = proc.communicate(timeout=1)
                 except subprocess.TimeoutExpired:
-                    # Command is still running; we detach and let the server continue starting in background
-                    proc.kill()
+                    proc.kill() # Detach if it's still running (common for WSD start)
                     out, err = "", ""
                 logging.info(f"WSD server start command initial stdout: {out.strip()}")
                 logging.debug(f"WSD server start command initial stderr: {err.strip()}")
             print("WSD server start command issued (non-blocking).")
             logging.info("WSD server start command issued (non-blocking).")
+            servers_started_this_run = True
         except Exception as e:
             print(f"Exception starting WSD server: {e}")
             logging.error(f"Exception starting WSD server: {e}")
-        max_attempts_wsd = 10  # give WSD more time to open its socket
-        
-        # Verify WSD server is running after start attempt
-        for attempt in range(max_attempts_wsd):
-            time.sleep(3) 
-            if is_wsd_server_running():
-                print("WSD server is running and accessible on port 5554.")
-                logging.info("WSD server is running and accessible on port 5554.")
-                wsd_running = True
-                
-                # Add a substantial delay to ensure WSD server is fully ready
-                print("Giving WSD server additional time to fully initialize...")
-                logging.info("Giving WSD server additional time to fully initialize...")
-                time.sleep(15)  # Extra delay for WSD which needs more time
-                break
-            elif attempt < max_attempts_wsd - 1:
-                print(f"Waiting for WSD server to become accessible (attempt {attempt+1}/{max_attempts_wsd})...")
-                logging.info(f"Waiting for WSD server to become accessible (attempt {attempt+1}/{max_attempts_wsd})...")
-            else:
-                print("WARNING: WSD server does not appear to be accessible on port 5554 after multiple attempts.")
-                logging.warning("WSD server does not appear to be accessible on port 5554 after multiple attempts. This may cause errors during MetaMap processing.")
     else:
         print("WSD server is already running.")
         logging.info("WSD server is already running.")
             
-    mmserver_started = False
+    mmserver_started_successfully_this_run = False
     if mmserver_available:
         print("Starting mmserver20 (optional)...")
         logging.info("Starting mmserver20 (optional)...")
         try:
-            # Check if already running using pgrep
             pgrep_proc = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             if pgrep_proc.returncode != 0:  # Not running
                 mmserver_log_path = os.path.join(os.path.dirname(public_mm_dir), "mmserver20_startup.log")
@@ -556,22 +512,23 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
                     subprocess.Popen([mmserver], cwd=server_scripts_dir, stdout=outfile, stderr=outfile)
                 print(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
                 logging.info(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
-                time.sleep(2)
-                mmserver_started = True
+                time.sleep(2) # Brief wait for process to spawn
+                mmserver_started_successfully_this_run = True
+                servers_started_this_run = True
             else:
                 print("mmserver20 appears to be already running (pid found by pgrep).")
                 logging.info("mmserver20 appears to be already running (pid found by pgrep).")
-                mmserver_started = True
-        except FileNotFoundError:
-            # pgrep not available; start directly
+                mmserver_started_successfully_this_run = True # Already running is a success for this check
+        except FileNotFoundError: # pgrep not available
             try:
                 mmserver_log_path = os.path.join(os.path.dirname(public_mm_dir), "mmserver20_startup.log")
                 with open(mmserver_log_path, "ab") as outfile:
                     subprocess.Popen([mmserver], cwd=server_scripts_dir, stdout=outfile, stderr=outfile)
-                print(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
-                logging.info(f"mmserver20 launch attempted in background. Check {mmserver_log_path} for details.")
+                print(f"mmserver20 launch attempted in background (pgrep not found). Check {mmserver_log_path} for details.")
+                logging.info(f"mmserver20 launch attempted in background (pgrep not found). Check {mmserver_log_path} for details.")
                 time.sleep(2)
-                mmserver_started = True
+                mmserver_started_successfully_this_run = True
+                servers_started_this_run = True
             except Exception as e_mmserver:
                 print(f"Error attempting to start mmserver20 directly: {e_mmserver}")
                 logging.error(f"Error attempting to start mmserver20 directly: {e_mmserver}")
@@ -581,6 +538,15 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
     else:
         print("mmserver20 script not found – skipping optional mmserver20 startup.")
         logging.info("mmserver20 script not found – skipping optional mmserver20 startup.")
+
+    if servers_started_this_run:
+        print("Waiting briefly for servers to initialize after start commands...")
+        logging.info("Waiting briefly for servers to initialize after start commands...")
+        time.sleep(10) # Single, consolidated wait
+
+    # Re-evaluate server status after attempts / brief wait
+    tagger_running = is_tagger_server_running()
+    wsd_running = is_wsd_server_running()
     
     print("Server status summary:")
     logging.info("Server status summary:")
@@ -588,30 +554,54 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
     logging.info(f"SKR/MedPost tagger: {'RUNNING' if tagger_running else 'NOT RUNNING'}")
     print(f"WSD server: {'RUNNING' if wsd_running else 'NOT RUNNING'}")
     logging.info(f"WSD server: {'RUNNING' if wsd_running else 'NOT RUNNING'}")
-    print(f"mmserver20: {'LIKELY RUNNING' if mmserver_started else 'UNKNOWN'}")
-    logging.info(f"mmserver20: {'LIKELY RUNNING' if mmserver_started else 'UNKNOWN'}")
     
-    # Call formal status check
-    status_metamap_servers(public_mm_dir, server_scripts_dir)
+    # mmserver20 status (use pgrep again for consistent check)
+    mmserver_running_final_check = False
+    if mmserver_available:
+        try:
+            pgrep_proc_final = subprocess.run(["pgrep", "-f", "mmserver20"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            mmserver_running_final_check = (pgrep_proc_final.returncode == 0)
+        except Exception:
+            pass # pgrep might not be available
+    print(f"mmserver20: {'RUNNING (pgrep)' if mmserver_running_final_check else ('NOT RUNNING or UNKNOWN' if mmserver_available else 'NOT AVAILABLE')}")
+    logging.info(f"mmserver20: {'RUNNING (pgrep)' if mmserver_running_final_check else ('NOT RUNNING or UNKNOWN' if mmserver_available else 'NOT AVAILABLE')}")
     
-    # Overall success state - be more lenient about WSD server which can be trickier to detect
-    # Only require that tagger is running since that's essential and more reliably detected
-    server_success = tagger_running  # Primary server that must be running
+    # Call formal status check (optional, as we've done direct checks)
+    # status_metamap_servers(public_mm_dir, server_scripts_dir) # This can be verbose, consider removing or conditionalizing
     
+    server_success = tagger_running # Primary server that must be running
+
     # If WSD server wasn't detected as running by the socket check, do a final process check
     if not wsd_running:
         print("Performing final process-based check for WSD server...")
         logging.info("Performing final process-based check for WSD server...")
         try:
-            # Give a little more time for process to appear in process list
-            time.sleep(3)
-            ps_output = subprocess.run(["ps", "-ef"], capture_output=True, text=True, timeout=3).stdout.lower()
-            wsd_process_found = any(re.search(pattern, ps_output) for pattern in ["wsdserver", "disambserver", "java.*wsd_server"])
+            time.sleep(3) # Give a little more time for process to appear
+            wsd_process_found = False
+            global psutil # Ensure psutil is accessible if imported
+            if 'psutil' in globals() and psutil: # Use psutil if available
+                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                    try:
+                        cmdline = proc.info.get('cmdline')
+                        if cmdline:
+                            proc_cmd_str = " ".join(cmdline).lower()
+                            if any(re.search(pattern, proc_cmd_str) for pattern in ["wsdserver", "disambserver", "java.*wsd_server"]):
+                                wsd_process_found = True
+                                break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue # Process ended before we could get info
+            elif sys.platform != "win32": # Fallback to ps -ef on non-Windows if psutil failed or not imported at top
+                ps_output_run = subprocess.run(["ps", "-ef"], capture_output=True, text=True, timeout=3)
+                if ps_output_run.stdout: # Check if stdout is not None
+                    ps_output = ps_output_run.stdout.lower()
+                    wsd_process_found = any(re.search(pattern, ps_output) for pattern in ["wsdserver", "disambserver", "java.*wsd_server"])
+            else: # No psutil and on Windows, can't do much here for generic process check
+                logging.info("psutil not available/accessible and on Windows, skipping generic process check for WSD.")
             
             if wsd_process_found:
-                print("WSD server process detected but not accessible via port. Proceeding with caution.")
-                logging.info("WSD server process detected but not accessible via port. Proceeding with caution.")
-                wsd_running = True  # Consider it running for status report
+                print("WSD server process detected but may not be accessible via port. Proceeding with caution.")
+                logging.info("WSD server process detected but may not be accessible via port. Proceeding with caution.")
+                wsd_running = True
             else:
                 print("No WSD server process detected in process list.")
                 logging.warning("No WSD server process detected in process list.")
@@ -620,7 +610,7 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
             logging.error(f"Error in final WSD process check: {e}")
     
     # Report final status
-    if tagger_running and wsd_running and (mmserver_started or not os.path.isfile(mmserver)):
+    if tagger_running and wsd_running and (mmserver_running_final_check or not os.path.isfile(mmserver)):
         print("All required MetaMap servers appear to be running")
         logging.info("All required MetaMap servers appear to be running")
     elif tagger_running:
@@ -630,31 +620,37 @@ def start_metamap_servers(public_mm_dir, server_scripts_dir=None):
         print("WARNING: Essential tagger server not running. MetaMap will likely not function correctly.")
         logging.warning("WARNING: Essential tagger server not running. MetaMap will likely not function correctly.")
     
-    # Perform a connectivity test to verify MetaMap binary can actually connect to servers
-    if tagger_running or wsd_running:
+    # Perform a connectivity test
+    # Run connectivity test if we attempted to start servers OR if they were found running by initial checks.
+    # Basically, if public_mm_dir is valid and we expect servers to be usable.
+    if public_mm_dir: # Check if public_mm_dir was determined
         try:
             from .cmdexecutor import verify_metamap_server_connectivity
             print("Performing MetaMap connectivity test...")
             logging.info("Performing MetaMap connectivity test...")
             
-            # Use the MetaMap binary path to test connectivity
             metamap_binary_path = get_config_value("metamap_binary_path")
             if metamap_binary_path:
-                success, error_msg = verify_metamap_server_connectivity(metamap_binary_path)
-                if success:
+                if servers_started_this_run: # Only wait if we just tried to start them
+                    print("Waiting 10 seconds for servers to stabilize before connectivity test...")
+                    logging.info("Waiting 10 seconds for servers to stabilize before connectivity test...")
+                    time.sleep(10)
+
+                conn_success, error_msg = verify_metamap_server_connectivity(metamap_binary_path)
+                if conn_success:
                     print("MetaMap successfully connected to servers!")
                     logging.info("MetaMap successfully connected to servers!")
                 else:
                     print(f"WARNING: MetaMap connectivity test failed: {error_msg}")
                     logging.warning(f"MetaMap connectivity test failed: {error_msg}")
-                    print("Waiting 30 more seconds for servers to stabilize...")
-                    logging.info("Waiting 30 more seconds for servers to stabilize...")
-                    time.sleep(30)  # Extra long delay if the test fails
+                    # Removed the long sleep here; workers will handle retries.
+        except ImportError:
+            print("Could not import verify_metamap_server_connectivity. Skipping test.")
+            logging.warning("Could not import verify_metamap_server_connectivity. Skipping test.")
         except Exception as e:
             print(f"Error running connectivity test: {e}")
             logging.error(f"Error running connectivity test: {e}")
     
-    # Return success if the primary components are running
     return server_success
 
 def stop_metamap_servers(public_mm_dir):

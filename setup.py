@@ -20,7 +20,7 @@ def setup_package():
     
     setup(
         name="pythonmetamap",
-        version="0.5.0",
+        version="0.5.1",
         packages=find_packages(where="src", exclude=["*.tests", "*.tests.*", "tests.*", "tests", "*.__pycache__", "__pycache__", "*.pyc"]),
         package_dir={"": "src"},
         install_requires=[
@@ -29,7 +29,7 @@ def setup_package():
             "tqdm>=4.64.0",
             "rich>=12.0.0",
         ],
-        entry_points=entry_points,
+          entry_points=entry_points,
         include_package_data=True,
     )
 
