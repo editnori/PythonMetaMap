@@ -43,14 +43,14 @@ COLORS = {
 # ASCII Banner with colors
 BANNER = r"""[bold cyan]
 ╔═══════════════════════════════════════════════════════════════╗
-║  ____        __  __  __  __     _   _            _            ║
-║ |  _ \ _   _|  \/  ||  \/  |   | \ | |__ ___   _(_) __ _     ║
-║ | |_) | | | | |\/| || |\/| |   |  \| / _` \ \ / / |/ _` |    ║
+║  ____        __  __  __  __     _   _             _           ║
+║ |  _ \ _   _|  \/  ||  \/  |   | \ | | __ ___   _(_) __ _     ║
+║ | |_) | | | | |\/| || |\/| |   |  \|  / _` \ \ / / |/ _` |    ║
 ║ |  __/| |_| | |  | || |  | |   | |\  | (_| |\ V /| | (_| |    ║
 ║ |_|    \__, |_|  |_||_|  |_|   |_| \_|\__,_| \_/ |_|\__, |    ║
-║        |___/                                         |___/     ║
+║        |___/                                         |___/    ║
 ╚═══════════════════════════════════════════════════════════════╝[/bold cyan]
-           [dim]MetaMap Orchestrator v8.0.8 - Interactive Mode[/dim]
+           [dim]MetaMap Orchestrator v8.1.8 - Interactive Mode[/dim]
 """
 
 class InteractiveNavigator:
@@ -621,30 +621,58 @@ It manages servers, handles batch processing, and provides retry mechanisms.
         self.clear_screen()
         console.print(Panel("[bold]View Results & Manage Outputs[/bold]", style=COLORS['header']))
         
-        console.print(" 1  View recent processing sessions")
-        console.print(" 2  View concept statistics")
-        console.print(" 3  Clear failed outputs")
-        console.print(" 4  Clear all outputs")
-        console.print(" 5  Resume interrupted processing")
-        console.print(" 6  Monitor background process")
-        console.print(" B  Back to main menu")
-        console.print()
+        # Get output directories
+        default_output = self.config.get('default_output_dir', './output_csvs')
+        output_path = Path(default_output)
         
-        choice = Prompt.ask("Select option", choices=["1", "2", "3", "4", "5", "6", "b"]).lower()
+        # Quick stats
+        if output_path.exists():
+            csv_files = list(output_path.glob("*.csv"))
+            csv_files = [f for f in csv_files if not f.name.startswith('.')]
+            total_size = sum(f.stat().st_size for f in csv_files) / 1024 / 1024  # MB
+            
+            console.print(f"[{COLORS['info']}]Output Directory:[/{COLORS['info']}] {output_path}")
+            console.print(f"[{COLORS['info']}]Total Files:[/{COLORS['info']}] {len(csv_files)}")
+            console.print(f"[{COLORS['info']}]Total Size:[/{COLORS['info']}] {total_size:.1f} MB\n")
+        
+        # Menu options
+        menu = Table(show_header=False, box=None)
+        menu.add_column("Option", style=COLORS['option'])
+        menu.add_column("Description")
+        
+        menu.add_row("1", "View recent processing sessions")
+        menu.add_row("2", "Analyze concepts (like kidney stone analysis)")
+        menu.add_row("3", "Session statistics and performance")
+        menu.add_row("4", "Monitor background processing")
+        menu.add_row("5", "Clear failed outputs")
+        menu.add_row("6", "Clear all outputs")
+        menu.add_row("7", "Export analysis report")
+        menu.add_row("8", "Retry failed files")
+        menu.add_row("B", "Back to main menu")
+        
+        console.print(menu)
+        
+        choice = Prompt.ask("\nSelect option", choices=["1", "2", "3", "4", "5", "6", "7", "8", "b"]).lower()
         
         if choice == "1":
             self.view_recent_sessions()
         elif choice == "2":
-            self.view_concept_stats()
+            self.analyze_concepts_interactive()
         elif choice == "3":
-            self.clear_failed_outputs()
+            self.view_session_statistics()
         elif choice == "4":
-            self.clear_all_outputs()
-        elif choice == "5":
-            self.resume_processing()
-        elif choice == "6":
             self.monitor_background()
-        
+        elif choice == "5":
+            self.clear_failed_outputs()
+        elif choice == "6":
+            self.clear_all_outputs()
+        elif choice == "7":
+            self.export_analysis_report()
+        elif choice == "8":
+            self.retry_failed_files()
+        elif choice == "b":
+            return
+            
         if choice != "b":
             console.input("\nPress Enter to continue...")
             self.results_menu()
@@ -1027,97 +1055,173 @@ It manages servers, handles batch processing, and provides retry mechanisms.
             if self.config.get('debug', False):
                 traceback.print_exc()
 
-    def view_concept_stats(self):
-        """View concept statistics"""
-        self.clear_screen()
-        console.print(Panel("[bold]Concept Statistics[/bold]", style=COLORS['header']))
+    def analyze_concepts_interactive(self):
+        """Interactive concept analysis"""
+        from .analysis import ConceptAnalyzer, FILTER_PRESETS
         
         output_dir = self.config.get('default_output_dir', './output_csvs')
+        output_path = Path(output_dir)
         
-        if not Path(output_dir).exists():
-            console.print(f"[{COLORS['warning']}]Output directory not found: {output_dir}[/{COLORS['warning']}]")
+        if not output_path.exists() or not list(output_path.glob("*.csv")):
+            console.print(f"[{COLORS['error']}]No output files found to analyze[/{COLORS['error']}]")
             return
         
-        # Use the concept stats functionality from commands
-        from collections import Counter
-        import csv
+        # Show analysis options
+        console.print(Panel("[bold]Concept Analysis Options[/bold]", style=COLORS['header']))
         
-        output_path = Path(output_dir)
-        concept_counter = Counter()
-        semantic_type_counter = Counter()
-        file_count = 0
+        # Preset options
+        console.print("\n[bold]Preset Filters:[/bold]")
+        preset_table = Table(show_header=False, box=None)
+        preset_table.add_column("Option", style=COLORS['option'])
+        preset_table.add_column("Preset", style=COLORS['info'])
+        preset_table.add_column("Description")
+        
+        preset_table.add_row("1", "kidney_stone", "Complete kidney stone analysis (concepts, symptoms, procedures)")
+        preset_table.add_row("2", "kidney_symptoms", "Kidney stone symptoms only")
+        preset_table.add_row("3", "kidney_procedures", "Kidney stone procedures only")
+        preset_table.add_row("4", "diabetes", "Diabetes related concepts")
+        preset_table.add_row("5", "hypertension", "Hypertension related concepts")
+        preset_table.add_row("6", "pain", "Pain related concepts")
+        preset_table.add_row("7", "custom", "Custom filter terms")
+        preset_table.add_row("8", "all", "Analyze all concepts (no filter)")
+        
+        console.print(preset_table)
+        
+        choice = Prompt.ask("\nSelect analysis type", choices=["1", "2", "3", "4", "5", "6", "7", "8"], default="8")
+        
+        preset = None
+        filter_terms = None
+        
+        if choice == "1":
+            preset = "kidney_stone"
+        elif choice == "2":
+            preset = "kidney_symptoms"
+        elif choice == "3":
+            preset = "kidney_procedures"
+        elif choice == "4":
+            preset = "diabetes"
+        elif choice == "5":
+            preset = "hypertension"
+        elif choice == "6":
+            preset = "pain"
+        elif choice == "7":
+            # Custom filter
+            terms = Prompt.ask("Enter filter terms (comma-separated)")
+            filter_terms = [t.strip() for t in terms.split(',')]
+        
+        # Analysis options
+        visualize = Confirm.ask("\nGenerate visualizations?", default=True)
+        excel = Confirm.ask("Export to Excel?", default=False)
+        
+        # Run analysis
+        analyzer = ConceptAnalyzer(output_path)
+        
+        filter_name = preset if preset else ("_".join(filter_terms) if filter_terms else "all")
         
         with console.status("Analyzing concepts...") as status:
-            # Read all CSV files
-            for csv_file in output_path.glob("*.csv"):
-                if csv_file.name.startswith('.'):
-                    continue
-                    
-                try:
-                    with open(csv_file, 'r', encoding='utf-8') as f:
-                        reader = csv.DictReader(f)
-                        for row in reader:
-                            if 'preferred_name' in row and 'cui' in row:
-                                concept = f"{row['preferred_name']} ({row['cui']})"
-                                concept_counter[concept] += 1
-                                
-                            if 'semantic_types' in row:
-                                sem_types = row['semantic_types'].strip('[]').split(',')
-                                for st in sem_types:
-                                    st = st.strip().strip("'\"")
-                                    if st:
-                                        semantic_type_counter[st] += 1
-                                        
-                    file_count += 1
-                except Exception:
-                    pass
-        
-        if not concept_counter:
-            console.print(f"[{COLORS['warning']}]No concepts found in output files[/{COLORS['warning']}]")
-            return
+            report = analyzer.analyze_directory(filter_terms, preset=preset)
         
         # Display results
-        console.print(f"\n[bold]Concept Statistics from {file_count} files[/bold]\n")
+        summary = report['summary']
+        console.print(f"\n[{COLORS['success']}]✓ Analysis complete![/{COLORS['success']}]")
+        console.print(f"  Files analyzed: {summary['files_analyzed']}")
+        console.print(f"  Total concepts: {summary['total_concepts']:,}")
+        console.print(f"  Total occurrences: {summary['total_occurrences']:,}")
         
-        # Top concepts table
-        top = IntPrompt.ask("Number of top concepts to show", default=20)
+        # Show top concepts
+        if report['top_concepts']:
+            console.print(f"\n[bold]Top 10 Concepts:[/bold]")
+            for i, (concept, count) in enumerate(report['top_concepts'][:10], 1):
+                console.print(f"  {i}. {concept}: {count}")
         
-        concept_table = Table(title=f"Top {top} Concepts", box=box.ROUNDED)
-        concept_table.add_column("Rank", style=COLORS['info'])
-        concept_table.add_column("Concept (CUI)", style=COLORS['success'])
-        concept_table.add_column("Count", style=COLORS['warning'])
-        concept_table.add_column("Frequency", style=COLORS['dim'])
+        # Generate outputs
+        if visualize:
+            with console.status("Generating visualizations..."):
+                analyzer.generate_visualizations(output_path, filter_name)
+            console.print(f"[{COLORS['success']}]✓ Visualizations saved to {output_path / 'visualizations'}[/{COLORS['success']}]")
         
-        total_concepts = sum(concept_counter.values())
+        if excel:
+            excel_file = output_path / f"{filter_name}_analysis.xlsx"
+            with console.status("Exporting to Excel..."):
+                analyzer.export_to_excel(excel_file, filter_name)
+            console.print(f"[{COLORS['success']}]✓ Excel report saved to {excel_file}[/{COLORS['success']}]")
+    
+    def view_session_statistics(self):
+        """View detailed session statistics"""
+        from .analysis import ProcessingSessionAnalyzer
         
-        for i, (concept, count) in enumerate(concept_counter.most_common(top), 1):
-            freq = f"{(count/total_concepts)*100:.1f}%"
-            concept_table.add_row(str(i), concept, str(count), freq)
+        output_dir = self.config.get('default_output_dir', './output_csvs')
+        output_path = Path(output_dir)
         
-        console.print(concept_table)
+        if not output_path.exists():
+            console.print(f"[{COLORS['error']}]Output directory not found[/{COLORS['error']}]")
+            return
         
-        # Semantic types table
-        console.print(f"\n[bold]Top Semantic Types[/bold]\n")
+        analyzer = ProcessingSessionAnalyzer(output_path)
         
-        sem_table = Table(title="Semantic Type Distribution", box=box.ROUNDED)
-        sem_table.add_column("Semantic Type", style=COLORS['info'])
-        sem_table.add_column("Count", style=COLORS['warning'])
-        sem_table.add_column("Percentage", style=COLORS['dim'])
+        # Get session stats
+        stats = analyzer.get_session_stats()
         
-        total_sem_types = sum(semantic_type_counter.values())
+        # Display session info
+        if stats['session_info']:
+            console.print(Panel(
+                f"[bold]Session ID:[/bold] {stats['session_info'].get('session_id', 'Unknown')}\n"
+                f"[bold]Started:[/bold] {stats['session_info'].get('started', 'Unknown')}\n"
+                f"[bold]Last Updated:[/bold] {stats['session_info'].get('last_updated', 'Unknown')}",
+                title="Session Information",
+                style=COLORS['info']
+            ))
         
-        for sem_type, count in semantic_type_counter.most_common(10):
-            pct = f"{(count/total_sem_types)*100:.1f}%"
-            sem_table.add_row(sem_type, str(count), pct)
+        # File statistics
+        file_stats = stats['file_stats']
+        if file_stats['total'] > 0:
+            console.print("\n[bold]File Processing Statistics:[/bold]")
+            console.print(f"  Total Files: {file_stats['total']}")
+            console.print(f"  Completed: {file_stats['completed']} ({file_stats['completed']/file_stats['total']*100:.1f}%)")
+            console.print(f"  Failed: {file_stats['failed']} ({file_stats['failed']/file_stats['total']*100:.1f}%)")
+            console.print(f"  In Progress: {file_stats['in_progress']}")
+            console.print(f"  Success Rate: {file_stats['success_rate']:.1f}%")
         
-        console.print(sem_table)
+        # Performance metrics
+        perf = stats['performance']
+        if perf['avg_processing_time'] > 0:
+            console.print("\n[bold]Performance Metrics:[/bold]")
+            console.print(f"  Average Processing Time: {perf['avg_processing_time']:.1f} seconds/file")
+            console.print(f"  Throughput: {perf['throughput']:.2f} files/second")
+            console.print(f"  Total Processing Time: {perf['total_time']/60:.1f} minutes")
         
-        # Summary statistics
-        console.print(f"\n[bold]Summary:[/bold]")
-        console.print(f"  • Total unique concepts: {len(concept_counter):,}")
-        console.print(f"  • Total concept occurrences: {total_concepts:,}")
-        console.print(f"  • Average concepts per file: {total_concepts/file_count:.1f}")
-        console.print(f"  • Total semantic types: {len(semantic_type_counter)}")
+        # Failed file analysis
+        if stats['failed_analysis']['by_error_type']:
+            console.print("\n[bold]Failed File Analysis:[/bold]")
+            for error_type, count in stats['failed_analysis']['by_error_type'].items():
+                console.print(f"  {error_type}: {count}")
+            
+            if stats['failed_analysis']['retry_candidates']:
+                console.print(f"\n[yellow]ℹ {len(stats['failed_analysis']['retry_candidates'])} files can be retried[/yellow]")
+        
+        # Output statistics
+        output_stats = stats['output_stats']
+        if output_stats['total_size'] > 0:
+            console.print("\n[bold]Output Statistics:[/bold]")
+            console.print(f"  Total Size: {output_stats['total_size'] / 1024 / 1024:.1f} MB")
+            console.print(f"  Average File Size: {output_stats['avg_file_size'] / 1024:.1f} KB")
+            console.print(f"  Total Concepts: {output_stats['total_concepts']:,}")
+        
+        # Options
+        console.print("\n[bold]Options:[/bold]")
+        if stats['failed_analysis']['retry_candidates']:
+            if Confirm.ask("Retry failed files?"):
+                # Run retry command
+                from ..cli.commands import retry_failed
+                ctx = click.Context(retry_failed)
+                ctx.invoke(retry_failed, output_dir=str(output_path), dry_run=False)
+        
+        if Confirm.ask("\nSync state with filesystem?"):
+            sync_stats = analyzer.sync_with_filesystem()
+            if any(v > 0 for k, v in sync_stats.items() if k.startswith('outputs_not') or k.startswith('state_not')):
+                console.print("\n[yellow]⚠ Discrepancies found - state file may be out of sync[/yellow]")
+            else:
+                console.print("[green]✓ State is synchronized with filesystem[/green]")
 
     def monitor_background(self):
         """Monitor background processing"""
@@ -1321,6 +1425,357 @@ It manages servers, handles batch processing, and provides retry mechanisms.
         if choice not in ["3", "4"]:
             console.input("\nPress Enter to continue...")
             self.monitor_background()
+
+    def export_analysis_report(self):
+        """Export comprehensive analysis report"""
+        from .analysis import ConceptAnalyzer, ProcessingSessionAnalyzer, FILTER_PRESETS
+        
+        output_dir = self.config.get('default_output_dir', './output_csvs')
+        output_path = Path(output_dir)
+        
+        if not output_path.exists():
+            console.print(f"[{COLORS['error']}]Output directory not found[/{COLORS['error']}]")
+            return
+        
+        console.print(Panel("[bold]Export Analysis Report[/bold]", style=COLORS['header']))
+        
+        # Ask what type of report
+        console.print("\n[bold]Report Type:[/bold]")
+        console.print("  1. Comprehensive report (all concepts + session stats)")
+        console.print("  2. Kidney stone analysis report")
+        console.print("  3. Custom filtered report")
+        
+        report_type = Prompt.ask("Select report type", choices=["1", "2", "3"], default="1")
+        
+        # Initialize analyzers
+        concept_analyzer = ConceptAnalyzer(output_path)
+        session_analyzer = ProcessingSessionAnalyzer(output_path)
+        
+        # Create report structure
+        report = {
+            'generated': datetime.now().isoformat(),
+            'output_directory': str(output_path),
+            'report_type': '',
+            'concept_analysis': {},
+            'session_statistics': {}
+        }
+        
+        # Generate report based on type
+        with console.status("Generating report...") as status:
+            # Always include session statistics
+            report['session_statistics'] = session_analyzer.get_session_stats()
+            
+            if report_type == "1":
+                # Comprehensive report
+                report['report_type'] = 'comprehensive'
+                report['concept_analysis'] = concept_analyzer.analyze_directory()
+                filter_name = "comprehensive"
+                
+            elif report_type == "2":
+                # Kidney stone analysis
+                report['report_type'] = 'kidney_stone_analysis'
+                report['concept_analysis'] = concept_analyzer.analyze_directory(preset='kidney_stone')
+                filter_name = "kidney_stone"
+                
+            elif report_type == "3":
+                # Custom filter
+                terms = Prompt.ask("Enter filter terms (comma-separated)")
+                filter_terms = [t.strip() for t in terms.split(',')]
+                report['report_type'] = f'custom_filter: {", ".join(filter_terms)}'
+                report['concept_analysis'] = concept_analyzer.analyze_directory(filter_terms)
+                filter_name = "_".join(filter_terms)
+        
+        # Export options
+        console.print("\n[bold]Export Options:[/bold]")
+        
+        # JSON report
+        json_path = output_path / f"{filter_name}_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        import json
+        with open(json_path, 'w') as f:
+            json.dump(report, f, indent=2, default=str)
+        console.print(f"[{COLORS['success']}]✓ JSON report saved to {json_path}[/{COLORS['success']}]")
+        
+        # Excel report
+        if Confirm.ask("\nExport to Excel?"):
+            excel_path = output_path / f"{filter_name}_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+            concept_analyzer.export_to_excel(excel_path, filter_name)
+            console.print(f"[{COLORS['success']}]✓ Excel report saved to {excel_path}[/{COLORS['success']}]")
+        
+        # Visualizations
+        if Confirm.ask("\nGenerate visualizations?"):
+            concept_analyzer.generate_visualizations(output_path, filter_name)
+            console.print(f"[{COLORS['success']}]✓ Visualizations saved to {output_path / 'visualizations'}[/{COLORS['success']}]")
+        
+        # Summary
+        summary = report['concept_analysis']['summary']
+        console.print(f"\n[bold]Report Summary:[/bold]")
+        console.print(f"  Files Analyzed: {summary['files_analyzed']}")
+        console.print(f"  Total Concepts: {summary['total_concepts']:,}")
+        console.print(f"  Total Occurrences: {summary['total_occurrences']:,}")
+        console.print(f"  Success Rate: {report['session_statistics']['file_stats']['success_rate']:.1f}%")
+
+    def retry_failed_files(self):
+        """Retry failed files with interactive options"""
+        output_dir = self.config.get('default_output_dir', './output_csvs')
+        output_path = Path(output_dir)
+        
+        if not output_path.exists():
+            console.print(f"[{COLORS['error']}]Output directory not found: {output_dir}[/{COLORS['error']}]")
+            return
+        
+        # Check for state file
+        state_file = output_path / ".pymm_state.json"
+        if not state_file.exists():
+            console.print(f"[{COLORS['error']}]No processing state found. Cannot retry without previous session data.[/{COLORS['error']}]")
+            return
+        
+        # Load state
+        import json
+        try:
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+        except Exception as e:
+            console.print(f"[{COLORS['error']}]Error reading state file: {e}[/{COLORS['error']}]")
+            return
+        
+        # Get failed files
+        failed_files = state.get('failed_files', {})
+        if not failed_files:
+            console.print(f"[{COLORS['success']}]No failed files to retry![/{COLORS['success']}]")
+            return
+        
+        # Show failed files summary
+        self.clear_screen()
+        console.print(Panel("[bold]Retry Failed Files[/bold]", style=COLORS['header']))
+        
+        # Categorize errors
+        error_types = {}
+        for file_path, error_info in failed_files.items():
+            error_msg = error_info.get('error', 'Unknown error')
+            error_type = 'Timeout' if 'timeout' in error_msg.lower() else \
+                        'Memory' if 'memory' in error_msg.lower() else \
+                        'Java' if 'java' in error_msg.lower() else \
+                        'Other'
+            
+            if error_type not in error_types:
+                error_types[error_type] = []
+            error_types[error_type].append({
+                'path': file_path,
+                'name': Path(file_path).name,
+                'attempts': error_info.get('attempts', 1),
+                'error': error_msg
+            })
+        
+        # Show summary
+        summary_table = Table(title="Failed Files Summary", box=box.ROUNDED)
+        summary_table.add_column("Error Type", style=COLORS['info'])
+        summary_table.add_column("Count", style=COLORS['warning'])
+        summary_table.add_column("Example", style=COLORS['dim'])
+        
+        total_failed = len(failed_files)
+        for error_type, files in error_types.items():
+            example = files[0]['name'] if files else '-'
+            summary_table.add_row(error_type, str(len(files)), example)
+        
+        console.print(summary_table)
+        console.print(f"\n[bold]Total failed files: {total_failed}[/bold]")
+        
+        # Show retry options
+        console.print("\n[bold]Retry Options:[/bold]")
+        options_table = Table(show_header=False, box=None)
+        options_table.add_column("Option", style=COLORS['option'])
+        options_table.add_column("Description")
+        
+        options_table.add_row("1", "Retry all failed files")
+        options_table.add_row("2", "Retry specific error type")
+        options_table.add_row("3", "View detailed error list")
+        options_table.add_row("4", "Configure retry settings")
+        options_table.add_row("5", "Dry run (preview what would be retried)")
+        options_table.add_row("B", "Back")
+        
+        console.print(options_table)
+        
+        choice = Prompt.ask("\nSelect option", choices=["1", "2", "3", "4", "5", "b"]).lower()
+        
+        if choice == "1":
+            # Retry all
+            self._do_retry(output_dir, failed_files)
+        elif choice == "2":
+            # Retry specific error type
+            error_type = Prompt.ask(
+                "Select error type to retry",
+                choices=list(error_types.keys())
+            )
+            filtered_files = {
+                f['path']: failed_files[f['path']] 
+                for f in error_types[error_type]
+            }
+            self._do_retry(output_dir, filtered_files)
+        elif choice == "3":
+            # View detailed list
+            self._show_detailed_errors(failed_files)
+            console.input("\nPress Enter to continue...")
+            self.retry_failed_files()
+        elif choice == "4":
+            # Configure retry settings
+            self._configure_retry_settings()
+            self.retry_failed_files()
+        elif choice == "5":
+            # Dry run
+            self._do_retry(output_dir, failed_files, dry_run=True)
+            console.input("\nPress Enter to continue...")
+            self.retry_failed_files()
+    
+    def _do_retry(self, output_dir: str, failed_files: dict, dry_run: bool = False):
+        """Execute retry with given files"""
+        max_attempts = self.config.get('retry_max_attempts', 3)
+        delay = self.config.get('retry_base_delay', 5)
+        
+        # Filter candidates based on max attempts
+        retry_candidates = []
+        for file_path, error_info in failed_files.items():
+            attempts = error_info.get('attempts', 1)
+            if attempts < max_attempts:
+                retry_candidates.append({
+                    'path': file_path,
+                    'name': Path(file_path).name,
+                    'attempts': attempts,
+                    'error': error_info.get('error', 'Unknown')
+                })
+        
+        if not retry_candidates:
+            console.print(f"[{COLORS['warning']}]No files eligible for retry (all exceeded max attempts)[/{COLORS['warning']}]")
+            return
+        
+        # Show what will be retried
+        console.print(f"\n[bold]Will retry {len(retry_candidates)} files[/bold]")
+        console.print(f"Max attempts: {max_attempts}")
+        console.print(f"Delay between retries: {delay}s")
+        
+        if dry_run:
+            console.print(f"\n[{COLORS['warning']}]DRY RUN - No files will be processed[/{COLORS['warning']}]")
+            # Show first 10 files
+            for i, candidate in enumerate(retry_candidates[:10]):
+                console.print(f"  • {candidate['name']} (attempt {candidate['attempts'] + 1})")
+            if len(retry_candidates) > 10:
+                console.print(f"  ... and {len(retry_candidates) - 10} more")
+            return
+        
+        if not Confirm.ask(f"\nProceed with retry?"):
+            return
+        
+        # Check servers
+        if not self.check_servers():
+            if Confirm.ask("[yellow]Servers not running. Start them now?[/yellow]"):
+                self.start_servers()
+            else:
+                return
+        
+        # Execute retry using the CLI command
+        try:
+            from ..processing.batch_runner import BatchRunner
+            from ..core.state import StateManager
+            
+            # Get input directory from state
+            state_file = Path(output_dir) / ".pymm_state.json"
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+            
+            input_dir = state.get('input_dir')
+            if not input_dir or not Path(input_dir).exists():
+                console.print(f"[{COLORS['error']}]Original input directory not found[/{COLORS['error']}]")
+                return
+            
+            # Create runner for retry
+            runner = BatchRunner(input_dir, output_dir, self.config)
+            
+            # Process with progress
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("Retrying failed files...", total=len(retry_candidates))
+                
+                successful = 0
+                for candidate in retry_candidates:
+                    file_path = candidate['path']
+                    progress.update(task, description=f"Retrying {candidate['name']}...")
+                    
+                    try:
+                        # Add delay between retries
+                        if successful > 0:
+                            time.sleep(delay)
+                        
+                        # Process file
+                        runner._process_single_file(Path(file_path))
+                        successful += 1
+                        
+                    except Exception as e:
+                        console.print(f"[{COLORS['error']}]Failed: {candidate['name']} - {str(e)}[/{COLORS['error']}]")
+                    
+                    progress.update(task, advance=1)
+            
+            # Show results
+            console.print(f"\n[bold]Retry Results:[/bold]")
+            console.print(f"  [{COLORS['success']}]✓ Successfully processed: {successful}[/{COLORS['success']}]")
+            console.print(f"  [{COLORS['error']}]✗ Still failing: {len(retry_candidates) - successful}[/{COLORS['error']}]")
+            
+        except Exception as e:
+            console.print(f"[{COLORS['error']}]Retry error: {e}[/{COLORS['error']}]")
+    
+    def _show_detailed_errors(self, failed_files: dict):
+        """Show detailed error information"""
+        error_table = Table(title="Failed Files Details", box=box.ROUNDED)
+        error_table.add_column("File", style=COLORS['cyan'])
+        error_table.add_column("Attempts", style=COLORS['yellow'])
+        error_table.add_column("Error", style=COLORS['error'], max_width=50)
+        error_table.add_column("Timestamp", style=COLORS['dim'])
+        
+        for file_path, error_info in list(failed_files.items())[:20]:
+            error_table.add_row(
+                Path(file_path).name,
+                str(error_info.get('attempts', 1)),
+                error_info.get('error', 'Unknown')[:50] + '...' if len(error_info.get('error', '')) > 50 else error_info.get('error', 'Unknown'),
+                error_info.get('timestamp', '-')[:19] if error_info.get('timestamp') else '-'
+            )
+        
+        console.print(error_table)
+        
+        if len(failed_files) > 20:
+            console.print(f"\n[{COLORS['dim']}]Showing first 20 of {len(failed_files)} failed files[/{COLORS['dim']}]")
+    
+    def _configure_retry_settings(self):
+        """Configure retry-specific settings"""
+        console.print("\n[bold]Retry Configuration[/bold]")
+        
+        current_max_attempts = self.config.get('retry_max_attempts', 3)
+        current_delay = self.config.get('retry_base_delay', 5)
+        current_timeout = self.config.get('pymm_timeout', 300)
+        
+        settings_table = Table(box=box.ROUNDED)
+        settings_table.add_column("Setting", style=COLORS['info'])
+        settings_table.add_column("Current Value", style=COLORS['option'])
+        settings_table.add_column("Description", style=COLORS['dim'])
+        
+        settings_table.add_row("Max Attempts", str(current_max_attempts), "Maximum retry attempts per file")
+        settings_table.add_row("Base Delay", f"{current_delay}s", "Delay between retries")
+        settings_table.add_row("Timeout", f"{current_timeout}s", "Timeout per file")
+        
+        console.print(settings_table)
+        
+        if Confirm.ask("\nModify settings?"):
+            new_attempts = IntPrompt.ask("Max retry attempts", default=current_max_attempts)
+            new_delay = IntPrompt.ask("Delay between retries (seconds)", default=current_delay)
+            new_timeout = IntPrompt.ask("Timeout per file (seconds)", default=current_timeout)
+            
+            self.config.set('retry_max_attempts', new_attempts)
+            self.config.set('retry_base_delay', new_delay)
+            self.config.set('pymm_timeout', new_timeout)
+            
+            console.print(f"[{COLORS['success']}]✓ Retry settings updated[/{COLORS['success']}]")
 
 
 def interactive_mode():

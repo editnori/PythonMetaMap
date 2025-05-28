@@ -26,7 +26,7 @@ def setup_package():
     
     setup(
         name="pythonmetamap",
-        version="8.0.8",
+        version="8.1.8",
         author="Layth Qassem",
         author_email="layth@example.com",
         description="Advanced Python wrapper for NLM MetaMap with Java API integration",
@@ -56,6 +56,10 @@ def setup_package():
             "tqdm>=4.60.0",
             "colorama>=0.4.4",
             "jpype1>=1.4.0",  # For Java integration
+            "pandas>=1.3.0",  # For data analysis
+            "matplotlib>=3.4.0",  # For visualizations
+            "seaborn>=0.11.0",  # For enhanced visualizations
+            "openpyxl>=3.0.0",  # For Excel export
         ],
         entry_points=entry_points,
         include_package_data=True,

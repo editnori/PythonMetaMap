@@ -12,8 +12,9 @@ from rich import print as rprint
 from ..core.config import PyMMConfig
 from ..server.manager import ServerManager
 from ..processing.batch_runner import BatchRunner
-from .commands import server_group, config_group, stats_group, monitor
+from .commands import server_group, config_group, stats_group, monitor, retry, retry_failed
 from .interactive import interactive_mode
+from .analysis import analysis_group
 
 console = Console()
 
@@ -25,11 +26,11 @@ ASCII_BANNER = r"""[bold cyan]
  |  __/| |_| | |  | || |  | |
  |_|    \__, |_|  |_||_|  |_|
         |___/                 [/bold cyan]
-[dim]Python MetaMap Orchestrator v8.0.8[/dim]
+[dim]Python MetaMap Orchestrator v8.1.8[/dim]
 """
 
 @click.group(invoke_without_command=True)
-@click.version_option(version='8.0.8', prog_name='pymm')
+@click.version_option(version='8.1.8', prog_name='pymm')
 @click.option('--interactive', '-i', is_flag=True, help='Launch interactive mode')
 @click.pass_context
 def cli(ctx, interactive):
@@ -297,7 +298,10 @@ def interactive():
 cli.add_command(server_group, name='server')
 cli.add_command(config_group, name='config')
 cli.add_command(stats_group, name='stats')
+cli.add_command(analysis_group, name='analysis')
 cli.add_command(monitor)
+cli.add_command(retry)
+cli.add_command(retry_failed)
 
 @cli.command()
 def install():
