@@ -28,13 +28,20 @@ class MetamapCommand:
         When *True* the full command is printed and **--silent** is **not**
         appended.  When *False* MetaMap runs in silent-mode to cut down on
         noisy STDERR lines that slow down Pythonʼs subprocess pipe.
+    tagger_port : int, optional
+        Port number for the tagger server (default: 1795)
+    wsd_port : int, optional
+        Port number for the WSD server (default: 5554)
     """
 
-    def __init__(self, metamap_path, input_file, output_file, debug=False):
+    def __init__(self, metamap_path, input_file, output_file, debug=False, 
+                 tagger_port=1795, wsd_port=5554):
         self.metamap_path = abspath(metamap_path)
         self.input_file = input_file
         self.output_file = output_file
         self.debug = bool(debug)
+        self.tagger_port = tagger_port
+        self.wsd_port = wsd_port
         # Build CLI once and reuse between calls – avoids repeated shlex work
         self.command = self._get_command()
         if self.debug:
@@ -58,7 +65,8 @@ class MetamapCommand:
             "-I",                      # show candidate identifiers
             "--XMLf1",                 # compact XML format (faster to parse)
             "--negex",                 # attach negation features
-            "--word_sense_disambiguation",  # WSD on – improves precision
+            "--word_sense_disambiguation",  # Enable WSD for better accuracy
+            "--prune", "30",          # Prune candidates for performance
         ]
         
         # Check for environment variable
@@ -87,6 +95,12 @@ class MetamapCommand:
             current_options.append("--XMLf1")
 
         cmd = [self.metamap_path] + current_options
+        
+        # Add custom server ports if not default
+        if self.tagger_port != 1795:
+            cmd.extend(["--tagger_server_port", str(self.tagger_port)])
+        if self.wsd_port != 5554:
+            cmd.extend(["--wsd_server_port", str(self.wsd_port)])
         
         # Silent-mode drastically reduces the volume of diagnostic output. We
         # only keep MetaMap chatty when *debug* is requested.

@@ -26,22 +26,27 @@ class MetamapStuck(Exception):
 class Metamap:
     """ MetaMap Concept Extractor """
 
-    def __init__(self, metamap_path, debug=False):
+    def __init__(self, metamap_path, debug=False, tagger_port=1795, wsd_port=5554):
         """ MetaMap Wrapper parameters
 
         Args:
             metamap_path (str): Path to metamap
             debug (boolean): Debug On/Off
+            tagger_port (int): Port for tagger server
+            wsd_port (int): Port for WSD server
         """
         self.metamap_path = metamap_path
         self.debug = debug
+        self.tagger_port = tagger_port
+        self.wsd_port = wsd_port
         self.input_file, self.output_file = self._get_temp_files()
         
         self.metamap_command = MetamapCommand(self.metamap_path,
-                self.input_file, self.output_file, self.debug)
-        logger.info("Using traditional binary communication with MetaMap")
+                self.input_file, self.output_file, self.debug,
+                tagger_port=tagger_port, wsd_port=wsd_port)
+        logger.info(f"Using MetaMap with tagger port {tagger_port}, WSD port {wsd_port}")
         if debug:
-            print("Using traditional binary communication with MetaMap")
+            print(f"Using MetaMap with tagger port {tagger_port}, WSD port {wsd_port}")
 
     def is_alive(self):
         """Check if MetaMap is running

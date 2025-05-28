@@ -8,7 +8,7 @@ from xml.dom.minidom import parse as parse_xml
 candidate_mapping = {
     "score": "CandidateScore",
     "cui": "CandidateCUI",
-    "pref_name": "CandidatePreferredName",
+    "pref_name": "CandidatePreferred",
     "semtypes": "SemType",
     "sources": "Source",
     "ismapping": None,
@@ -135,6 +135,22 @@ class Concept(collections.namedtuple("Concept", list(candidate_mapping.keys())))
                     pos_len_val = int(position_nodes[0].getAttribute("y"))
                 except (ValueError, IndexError):
                     pass
+        
+        # Try ConceptPI tags (as seen in MetaMap 2020 XML output)
+        if pos_start_val is None:
+            concept_pi_nodes = candidate.getElementsByTagName("ConceptPI")
+            if concept_pi_nodes:
+                for pi_node in concept_pi_nodes:
+                    start_pos_nodes = pi_node.getElementsByTagName("StartPos")
+                    length_nodes = pi_node.getElementsByTagName("Length")
+                    if start_pos_nodes and length_nodes:
+                        try:
+                            # StartPos is 0-based in ConceptPI, convert to 1-based
+                            pos_start_val = int(start_pos_nodes[0].childNodes[0].data) + 1
+                            pos_len_val = int(length_nodes[0].childNodes[0].data)
+                            break
+                        except (ValueError, IndexError, AttributeError):
+                            pass
 
         # ---- Phrase-level positional info (span of whole phrase) ----
         phrase_start_val = None

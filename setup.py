@@ -7,10 +7,16 @@ __license__ = "mit"
 
 import sys
 from setuptools import setup, find_packages
+from pathlib import Path
+
+# Read README for long description
+readme_path = Path(__file__).parent / "README.md"
+long_description = readme_path.read_text(encoding="utf-8") if readme_path.exists() else ""
 
 entry_points = {
     'console_scripts': [
-        'pymm-cli = pymm.mimic_controller:main',
+        'pymm = pymm.cli.main:main',
+        'pymm-cli = pymm.cli.main:main',  # Backward compatibility
     ]
 }
 
@@ -20,17 +26,40 @@ def setup_package():
     
     setup(
         name="pythonmetamap",
-        version="0.5.1",
-        packages=find_packages(where="src", exclude=["*.tests", "*.tests.*", "tests.*", "tests", "*.__pycache__", "__pycache__", "*.pyc"]),
+        version="8.0.8",
+        author="Layth Qassem",
+        author_email="layth@example.com",
+        description="Advanced Python wrapper for NLM MetaMap with Java API integration",
+        long_description=long_description,
+        long_description_content_type="text/markdown",
+        url="https://github.com/layth/pythonmetamap",
+        packages=find_packages(where="src"),
         package_dir={"": "src"},
-        install_requires=[
-            "psutil>=5.9.0",
-            "colorama>=0.4.4",
-            "tqdm>=4.64.0",
-            "rich>=12.0.0",
+        classifiers=[
+            "Development Status :: 5 - Production/Stable",
+            "Intended Audience :: Healthcare Industry",
+            "Intended Audience :: Science/Research",
+            "License :: OSI Approved :: MIT License",
+            "Programming Language :: Python :: 3",
+            "Programming Language :: Python :: 3.8",
+            "Programming Language :: Python :: 3.9",
+            "Programming Language :: Python :: 3.10",
+            "Programming Language :: Python :: 3.11",
+            "Topic :: Scientific/Engineering :: Medical Science Apps.",
+            "Topic :: Text Processing :: Linguistic",
         ],
-          entry_points=entry_points,
+        python_requires=">=3.8",
+        install_requires=[
+            "click>=8.0.0",
+            "rich>=12.0.0",
+            "psutil>=5.9.0",
+            "tqdm>=4.60.0",
+            "colorama>=0.4.4",
+            "jpype1>=1.4.0",  # For Java integration
+        ],
+        entry_points=entry_points,
         include_package_data=True,
+        zip_safe=False,
     )
 
 if __name__ == "__main__":
