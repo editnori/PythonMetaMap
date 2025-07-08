@@ -26,13 +26,13 @@ def setup_package():
     
     setup(
         name="pythonmetamap",
-        version="8.1.8",
+        version="8.1.9",
         author="Layth Qassem",
         author_email="layth@example.com",
         description="Advanced Python wrapper for NLM MetaMap with Java API integration",
         long_description=long_description,
         long_description_content_type="text/markdown",
-        url="https://github.com/layth/pythonmetamap",
+        url="https://github.com/editnori/PythonMetaMap",
         packages=find_packages(where="src"),
         package_dir={"": "src"},
         classifiers=[
