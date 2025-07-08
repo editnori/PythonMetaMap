@@ -158,3 +158,53 @@ BatchRunner01.class
 # VSCode
 .vscode/
 .env.local
+
+# Output files
+output_csvs/*.csv
+output_csvs/.mimic_*
+output_csvs/logs/
+output_csvs/failed_files/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.tox/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.cache
+.DS_Store
+*.egg-info/
+build/
+dist/
+.eggs/
+
+
+# Output files
+output_csvs/*.csv
+output_csvs/.mimic_*
+output_csvs/logs/
+output_csvs/failed_files/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.tox/
+.pytest_cache/
+.mypy_cache/
+.coverage
+.cache
+.DS_Store
+*.egg-info/
+build/
+dist/
+.eggs/
+
