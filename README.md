@@ -1,201 +1,31 @@
-# PythonMetaMap
+PythonMetaMap
 
-PythonMetaMap provides a lightweight Python interface for running [MetaMap](https://github.com/LHNCBC/MetaMap-src) and parsing its XML output. The project is maintained by **Dr. Layth Qassem** and takes inspiration from the original `pymm` library by Srikanth Mujjiga.
+When you're processing medical text through MetaMap you want a tool that handles the complexity without getting in your way. PythonMetaMap wraps the National Library of Medicine's MetaMap in a Python interface that manages servers automatically, processes files in parallel, and recovers from failures without losing progress. The project builds on ideas from the original pymm library by Srikanth Mujjiga but adds modern features like real time monitoring, clinical analysis tools, and visualization capabilities.
 
-## Features
+To get started you'll need Python 3.8 or newer and Java 8 since MetaMap runs on the JVM. Install the package with pip install pythonmetamap then run pymm install to download and configure MetaMap automatically. This downloads about a gigabyte of data and compiles the binaries so give it a few minutes. Once that's done just type pymm to open the interactive menu where you can configure settings, start servers, and begin processing files.
 
-* **Automated MetaMap Installation** - Download and configure MetaMap 2020 automatically
-* **Interactive CLI** - User-friendly command-line interface with menu-driven options  
-* **Parallel Processing** - Process multiple files simultaneously with progress tracking
-* **State Management** - Resume interrupted batch jobs automatically
-* **Server Management** - Start/stop MetaMap servers (Tagger, WSD) from the CLI
-* **Comprehensive Monitoring** - Real-time dashboard with CPU/RAM usage and progress
-* **Flexible Output** - Export results as CSV with full UMLS concept information
+The simplest way to process files is through the interactive mode which you start with pymm -i or just pymm. From there you can set your input and output directories, choose how many parallel workers to use, and start processing. The system shows real time progress with CPU and memory usage for each worker. If something goes wrong the state is saved automatically so you can resume exactly where you left off by running pymm resume followed by your output directory path.
 
-## Prerequisites
+For command line usage you run pymm process input_dir output_dir to start a new batch. Add options like --workers 8 to use eight parallel processes or --timeout 600 to give each file ten minutes to process. The --background flag lets you run long jobs that continue after you close your terminal. While processing runs you can check progress with pymm status output_dir or monitor a background job with pymm monitor --follow.
 
-* **Python ≥ 3.8**
-* **Java 8+** (required by MetaMap)
-* **4GB+ RAM** recommended for processing
+Server management happens automatically but you can control it manually if needed. Run pymm server status to see what's running, pymm server start to spin up the tagger and word sense disambiguation servers, or pymm server pool --tagger 4 --wsd 4 to start multiple instances for heavy parallel processing. The system handles port conflicts automatically and monitors server health during processing.
 
-## Installation
+The analysis features give you deeper insights into your results. Run pymm stats concepts output_dir to see the most common medical concepts across all your files with their semantic types and occurrence counts. For more advanced analysis try pymm analysis concepts output_dir --visualize which generates charts showing concept frequency, semantic type distribution, and co occurrence patterns. You can filter results with --filter diabetes or use presets like --preset kidney_stone to focus on specific conditions.
 
-### Method 1: Install from PyPI (Recommended)
+Clinical researchers will appreciate the enhanced analysis mode which classifies note types, extracts demographics, filters common medical noise terms, and maps concepts to OMOP vocabulary. Export your results to Excel with pymm analysis concepts output_dir --excel report.xlsx to get multiple sheets with concepts, semantic types, co occurrences, and detailed statistics.
 
-```bash
-# Install the package
-pip install pythonmetamap
+Configuration lives in your home directory and you can view it with pymm config show or change settings with pymm config set like pymm config set max_parallel_workers 16. The interactive setup walks you through all options including MetaMap processing flags, timeout values, and Java heap size. Default settings work well for most use cases but you might increase workers for multi core machines or timeout for complex documents.
 
-# Download and install MetaMap automatically
-pymm install
+When files fail processing they're tracked automatically and you can retry them with pymm retry output_dir. The retry system increases timeouts and can filter by error type so you only reprocess files that failed for specific reasons. Check what would be retried with --dry-run before starting.
 
-# Launch the interactive CLI
-pymm
-```
+For developers the Python API gives direct access to MetaMap. Import the Metamap class, initialize it with your binary path, and call parse with a list of text strings. Each concept comes back with its CUI, score, preferred name, semantic types, source vocabularies, and position in the original text. The library handles process management, error recovery, and result parsing automatically.
 
-### Method 2: Install from Source
+Output files are CSV with columns for CUI, Score, ConceptName, PrefName, Phrase, SemTypes, Sources, and Position. Semantic types use colons as separators and sources use pipes. Position shows where concepts appear as start:length pairs. This format loads easily into pandas or Excel for further analysis.
 
-```bash
-# Clone the repository
-git clone https://github.com/editnori/PythonMetaMap.git
-cd PythonMetaMap
+The codebase is organized to separate concerns cleanly. Core MetaMap interaction lives in the pymm module, server management in the server module, parallel processing logic in the processing module, and all CLI code in the cli module. State management tracks progress in JSON files that persist between runs. The system uses multiprocessing for true parallelism and avoids Python's global interpreter lock.
 
-# Install in development mode
-pip install -e .
+If you run into issues check that Java is installed with pymm server check-java and that MetaMap compiled correctly. Server connection problems often resolve with pymm server restart all. For stubborn cases pymm server force-kill cleans up everything and lets you start fresh. Processing timeouts might need adjustment in configuration for very long documents.
 
-# Download and install MetaMap automatically  
-pymm install
+This tool processes thousands of clinical notes efficiently on a modern workstation. Eight workers can handle about 500 documents per hour depending on length and complexity. The instance pool feature reuses MetaMap processes between files which speeds up small batches significantly. Monitor resource usage during processing to find the sweet spot for your hardware.
 
-# Launch the interactive CLI
-pymm
-```
-
-## Quick Start
-
-### Interactive Mode (Recommended)
-
-```bash
-pymm
-```
-
-This opens an interactive menu where you can:
-- Configure settings
-- Start/stop MetaMap servers
-- Process files with visual progress
-- Retry failed files
-- View results and statistics
-
-### Command Line Mode
-
-Process a directory of text files:
-
-```bash
-pymm start <input_dir> <output_dir>
-```
-
-Resume an interrupted job:
-
-```bash
-pymm resume <input_dir> <output_dir>
-```
-
-### Python API
-
-```python
-from pymm import Metamap
-
-# Initialize with path to MetaMap binary
-mm = Metamap('/path/to/metamap/bin/metamap20')
-
-# Process text
-mmos = mm.parse(['heart attack'])
-
-# Extract concepts
-for mmo in mmos:
-    for concept in mmo:
-        print(f"CUI: {concept.cui}")
-        print(f"Name: {concept.matched}")
-        print(f"Score: {concept.score}")
-        print(f"Semantic Types: {concept.semtypes}")
-```
-
-## Output Format
-
-CSV files contain the following columns:
-- **CUI** - UMLS Concept Unique Identifier
-- **Score** - MetaMap confidence score
-- **ConceptName** - Matched concept name
-- **PrefName** - UMLS preferred name
-- **Phrase** - Original text phrase
-- **SemTypes** - Semantic types (colon-separated)
-- **Sources** - UMLS source vocabularies (pipe-separated)
-- **Position** - Position in text (start:length)
-
-## Configuration
-
-Settings are stored in `~/.pymm_controller_config.json`:
-
-```json
-{
-    "metamap_binary_path": "/path/to/metamap20",
-    "metamap_processing_options": "-Xd1g -y",
-    "max_parallel_workers": 4,
-    "pymm_timeout": 300,
-    "java_heap_size": "4g"
-}
-```
-
-Edit via the interactive menu or manually with a text editor.
-
-## Advanced Features
-
-### Dashboard Views
-- **Summary View** (s) - Overall progress and statistics
-- **Worker View** (w) - Individual worker status and resource usage
-- **File View** (f) - Detailed file processing status
-- **Stats View** (t) - Performance metrics and throughput
-
-### Keyboard Shortcuts
-- **p** - Pause/resume auto-scrolling
-- **q** - Quit dashboard
-- **s/w/f/t** - Switch between views
-
-### Retry Mechanism
-Failed files are automatically tracked and can be retried with:
-- Increased timeout values
-- Background processing mode
-- Detailed error analysis
-
-## Development
-
-### Running Tests
-
-```bash
-pytest tests/
-```
-
-### Building Documentation
-
-```bash
-cd docs/
-make html
-```
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Java Heap Space Error**
-   - Increase `java_heap_size` in configuration
-   - Reduce `max_parallel_workers`
-
-2. **MetaMap Server Connection Issues**
-   - Use the CLI to check server status
-   - Restart servers from the interactive menu
-
-3. **Processing Timeouts**
-   - Increase `pymm_timeout` for complex documents
-   - Use retry feature with extended timeout
-
-## License
-
-This project is licensed under the MIT License. See LICENSE.txt for details.
-
-## Acknowledgments
-
-- Original `pymm` project by Srikanth Mujjiga
-- MetaMap by the National Library of Medicine
-- Community contributors and testers
-
-## Citation
-
-If you use PythonMetaMap in your research, please cite:
-
-```bibtex
-@software{pythonmetamap,
-  title = {PythonMetaMap: A Python Interface for MetaMap},
-  author = {Qassem, Layth},
-  year = {2025},
-  url = {https://github.com/editnori/PythonMetaMap}
-}
-```
+Citation information appears in the repository if you use PythonMetaMap in research. The project continues to evolve with community input so submit issues or pull requests on GitHub. Dr. Layth Qassem maintains the codebase with contributions from users processing everything from clinical trials to literature reviews.
