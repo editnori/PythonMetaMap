@@ -134,10 +134,12 @@ class BatchRunner:
         pending = []
         
         for file in input_files:
-            output_file = self.output_dir / f"{file.name}.csv"
+            # Normalize file path for consistent comparison
+            file_str = str(file.resolve())
+            output_file = self.output_dir / f"{file.stem}.csv"
             
             # Check if already completed
-            if self.state_manager.is_completed(str(file)):
+            if self.state_manager.is_completed(file_str):
                 logger.debug(f"Skipping completed file: {file}")
                 continue
             
@@ -148,7 +150,7 @@ class BatchRunner:
                     with open(output_file, 'r') as f:
                         lines = f.readlines()
                         if lines and "META_BATCH_END" in lines[-1]:
-                            self.state_manager.mark_completed(str(file))
+                            self.state_manager.mark_completed(file_str)
                             logger.debug(f"Skipping file with valid output: {file}")
                             continue
                 except:
@@ -253,18 +255,18 @@ class BatchRunner:
                             
                             if success:
                                 results["processed"] += 1
-                                self.state_manager.mark_completed(str(file))
+                                self.state_manager.mark_completed(str(file.resolve()))
                                 logger.info(f"Processed {file.name} in {elapsed:.2f}s")
                             else:
                                 results["failed"] += 1
-                                results["failed_files"].append(str(file))
-                                self.state_manager.mark_failed(str(file), error or "Unknown error")
+                                results["failed_files"].append(str(file.resolve()))
+                                self.state_manager.mark_failed(str(file.resolve()), error or "Unknown error")
                                 logger.error(f"Failed to process {file.name}: {error}")
                         
                         except Exception as e:
                             results["failed"] += 1
-                            results["failed_files"].append(str(file))
-                            self.state_manager.mark_failed(str(file), str(e))
+                            results["failed_files"].append(str(file.resolve()))
+                            self.state_manager.mark_failed(str(file.resolve()), str(e))
                             logger.error(f"Exception processing {file.name}: {e}")
                         
                         # Update progress with rate limiting and smooth updates
@@ -301,18 +303,18 @@ class BatchRunner:
                         
                         if success:
                             results["processed"] += 1
-                            self.state_manager.mark_completed(str(file))
+                            self.state_manager.mark_completed(str(file.resolve()))
                             logger.info(f"Processed {file.name} in {elapsed:.2f}s")
                         else:
                             results["failed"] += 1
-                            results["failed_files"].append(str(file))
-                            self.state_manager.mark_failed(str(file), error or "Unknown error")
+                            results["failed_files"].append(str(file.resolve()))
+                            self.state_manager.mark_failed(str(file.resolve()), error or "Unknown error")
                             logger.error(f"Failed to process {file.name}: {error}")
                     
                     except Exception as e:
                         results["failed"] += 1
-                        results["failed_files"].append(str(file))
-                        self.state_manager.mark_failed(str(file), str(e))
+                        results["failed_files"].append(str(file.resolve()))
+                        self.state_manager.mark_failed(str(file.resolve()), str(e))
                         logger.error(f"Exception processing {file.name}: {e}")
         
         results["elapsed_time"] = time.time() - start_time
@@ -370,15 +372,27 @@ class BatchRunner:
             results = self._process_with_progress(pending_files)
             
             # Handle retries if configured
-            # TODO: Implement retry logic
-            # if self.config.get("retry_max_attempts", 0) > 0 and results["failed_files"]:
-            #     logger.info(f"Retrying {len(results['failed_files'])} failed files...")
-            #     retry_results = self.retry_manager.retry_failed_files(results["failed_files"])
-            #     
-            #     # Update results
-            #     results["processed"] += retry_results["recovered"]
-            #     results["failed"] -= retry_results["recovered"]
-            #     results["failed_files"] = retry_results["still_failed"]
+            if self.config.get("retry_max_attempts", 0) > 0 and results["failed_files"]:
+                logger.info(f"Retrying {len(results['failed_files'])} failed files...")
+                
+                # Create a process function for retry
+                def retry_process_func(file_path):
+                    file = Path(file_path)
+                    if self.use_instance_pool:
+                        return self._process_file_with_pool(file)
+                    else:
+                        return self._process_file_direct(file)
+                
+                retry_results = self.retry_manager.retry_failed_files(
+                    results["failed_files"], 
+                    retry_process_func
+                )
+                
+                # Update results
+                results["processed"] += retry_results["recovered"]
+                results["failed"] -= retry_results["recovered"]
+                results["failed_files"] = retry_results["still_failed"]
+                results["retry_summary"] = retry_results
             
             # Final statistics
             self.state_manager.update_statistics(

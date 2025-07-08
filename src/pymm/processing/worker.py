@@ -97,7 +97,11 @@ class FileProcessor:
             
             # Track concepts if state manager is available
             if self.state_manager and concepts:
-                self.state_manager.track_concepts(concepts)
+                try:
+                    self.state_manager.track_concepts(concepts)
+                except Exception as e:
+                    # Log error but don't fail the file processing
+                    self.logger.error(f"Failed to track concepts for {input_path.name}: {e}")
             
             processing_time = time.time() - start_time
             self.logger.info(f"Processed {input_path.name} in {processing_time:.2f}s, found {len(concepts)} concepts")

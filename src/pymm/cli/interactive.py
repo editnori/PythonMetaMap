@@ -641,7 +641,7 @@ It manages servers, handles batch processing, and provides retry mechanisms.
         menu.add_column("Description")
         
         menu.add_row("1", "View recent processing sessions")
-        menu.add_row("2", "Analyze concepts (like kidney stone analysis)")
+        menu.add_row("2", "Analyze concepts (standard or enhanced clinical analysis)")
         menu.add_row("3", "Session statistics and performance")
         menu.add_row("4", "Monitor background processing")
         menu.add_row("5", "Clear failed outputs")
@@ -1058,6 +1058,7 @@ It manages servers, handles batch processing, and provides retry mechanisms.
     def analyze_concepts_interactive(self):
         """Interactive concept analysis"""
         from .analysis import ConceptAnalyzer, FILTER_PRESETS
+        from .enhanced_analysis import EnhancedConceptAnalyzer, ENHANCED_FILTER_PRESETS
         
         output_dir = self.config.get('default_output_dir', './output_csvs')
         output_path = Path(output_dir)
@@ -1066,11 +1067,29 @@ It manages servers, handles batch processing, and provides retry mechanisms.
             console.print(f"[{COLORS['error']}]No output files found to analyze[/{COLORS['error']}]")
             return
         
-        # Show analysis options
-        console.print(Panel("[bold]Concept Analysis Options[/bold]", style=COLORS['header']))
+        # First ask which analysis type
+        console.print(Panel("[bold]Concept Analysis[/bold]", style=COLORS['header']))
         
-        # Preset options
-        console.print("\n[bold]Preset Filters:[/bold]")
+        console.print("\n[bold]Analysis Type:[/bold]")
+        type_table = Table(show_header=False, box=None)
+        type_table.add_column("Option", style=COLORS['option'])
+        type_table.add_column("Type", style=COLORS['info'])
+        type_table.add_column("Description")
+        
+        type_table.add_row("1", "Standard Analysis", "Basic concept analysis with visualizations")
+        type_table.add_row("2", "Enhanced Clinical Analysis", "Advanced analysis with demographics, note types, validation")
+        
+        console.print(type_table)
+        
+        analysis_type = Prompt.ask("\nSelect analysis type", choices=["1", "2"], default="1")
+        
+        if analysis_type == "2":
+            # Enhanced analysis
+            self._run_enhanced_analysis()
+            return
+        
+        # Standard analysis continues below
+        console.print("\n[bold]Standard Analysis - Preset Filters:[/bold]")
         preset_table = Table(show_header=False, box=None)
         preset_table.add_column("Option", style=COLORS['option'])
         preset_table.add_column("Preset", style=COLORS['info'])
@@ -1776,6 +1795,176 @@ It manages servers, handles batch processing, and provides retry mechanisms.
             self.config.set('pymm_timeout', new_timeout)
             
             console.print(f"[{COLORS['success']}]✓ Retry settings updated[/{COLORS['success']}]")
+    
+    def _run_enhanced_analysis(self):
+        """Run enhanced clinical analysis with interactive options"""
+        from .enhanced_analysis import EnhancedConceptAnalyzer, ENHANCED_FILTER_PRESETS
+        
+        output_dir = self.config.get('default_output_dir', './output_csvs')
+        output_path = Path(output_dir)
+        
+        # Show enhanced preset options
+        console.print("\n[bold]Enhanced Analysis - Clinical Presets:[/bold]")
+        preset_table = Table(show_header=False, box=None)
+        preset_table.add_column("Option", style=COLORS['option'])
+        preset_table.add_column("Preset", style=COLORS['info'])
+        preset_table.add_column("Description")
+        
+        preset_table.add_row("1", "kidney_stone_comprehensive", "Comprehensive kidney stone concepts")
+        preset_table.add_row("2", "stone_procedures_removal", "Stone removal procedures (PCNL, URS, etc)")
+        preset_table.add_row("3", "stone_procedures_drainage", "Drainage procedures (stents, nephrostomy)")
+        preset_table.add_row("4", "stone_characteristics", "Stone composition and characteristics")
+        preset_table.add_row("5", "stone_outcomes", "Treatment outcomes and complications")
+        preset_table.add_row("6", "custom", "Custom filter terms")
+        preset_table.add_row("7", "all", "Analyze all concepts (no filter)")
+        preset_table.add_row("", "", "")
+        preset_table.add_row("D", "details", "[dim]Show detailed descriptions of presets[/dim]")
+        
+        console.print(preset_table)
+        
+        choice = Prompt.ask("\nSelect preset", choices=["1", "2", "3", "4", "5", "6", "7", "d"], default="7").lower()
+        
+        # Show detailed descriptions if requested
+        if choice == "d":
+            console.print("\n[bold]Detailed Preset Descriptions:[/bold]\n")
+            for i, (key, preset) in enumerate(ENHANCED_FILTER_PRESETS.items(), 1):
+                console.print(f"[bold cyan]{i}. {preset['description']}[/bold cyan]")
+                console.print(f"   [dim]{preset['details']}[/dim]")
+                if 'terms' in preset and preset['terms']:
+                    console.print(f"   [yellow]Examples:[/yellow] {', '.join(preset['terms'][:3])}...")
+                console.print()
+            
+            console.input("Press Enter to continue...")
+            return self._run_enhanced_analysis()  # Restart the method
+        
+        preset = None
+        filter_terms = None
+        
+        preset_map = {
+            "1": "kidney_stone_comprehensive",
+            "2": "stone_procedures_removal",
+            "3": "stone_procedures_drainage",
+            "4": "stone_characteristics",
+            "5": "stone_outcomes"
+        }
+        
+        if choice in preset_map:
+            preset = preset_map[choice]
+        elif choice == "6":
+            terms = Prompt.ask("Enter filter terms (comma-separated)")
+            filter_terms = [t.strip() for t in terms.split(',')]
+        
+        # Enhanced analysis options
+        console.print("\n[bold]Enhanced Analysis Options:[/bold]")
+        sample_size = IntPrompt.ask("Validation sample size", default=100)
+        visualize = Confirm.ask("Generate comparative visualizations?", default=True)
+        chord = Confirm.ask("Generate interactive chord diagram (semantic co-occurrences)?", default=True)
+        excel = Confirm.ask("Export comprehensive Excel report?", default=True)
+        validation = Confirm.ask("Export validation set for manual review?", default=False)
+        html_report = Confirm.ask("Generate comprehensive HTML report with full extraction methodology?", default=True)
+        
+        # Run enhanced analysis
+        analyzer = EnhancedConceptAnalyzer(output_path)
+        
+        filter_name = preset if preset else ("_".join(filter_terms) if filter_terms else "all")
+        
+        with console.status("Running enhanced clinical analysis...") as status:
+            report = analyzer.analyze_directory_enhanced(
+                filter_terms, 
+                preset=preset, 
+                sample_size=sample_size
+            )
+        
+        # Display enhanced results
+        summary = report['summary']
+        console.print(f"\n[{COLORS['success']}]✓ Enhanced analysis complete![/{COLORS['success']}]")
+        
+        # Summary table
+        summary_table = Table(title="Enhanced Analysis Summary", box=box.ROUNDED)
+        summary_table.add_column("Metric", style=COLORS['info'])
+        summary_table.add_column("Value", style=COLORS['success'])
+        
+        summary_table.add_row("Files Analyzed", str(summary['files_analyzed']))
+        summary_table.add_row("Unique Patients", str(summary['unique_patients']))
+        summary_table.add_row("Avg Notes/Patient", f"{summary['avg_notes_per_patient']:.2f}")
+        summary_table.add_row("Total Concepts", f"{summary['total_concepts']:,}")
+        summary_table.add_row("Total Occurrences", f"{summary['total_occurrences']:,}")
+        
+        console.print(summary_table)
+        
+        # Note type distribution
+        if report['note_types']:
+            console.print("\n[bold]Note Type Distribution:[/bold]")
+            for note_type, count in sorted(report['note_types'].items(), 
+                                          key=lambda x: x[1], reverse=True)[:5]:
+                console.print(f"  • {note_type}: {count}")
+        
+        # Demographics
+        if report['demographics']:
+            console.print("\n[bold]Demographics:[/bold]")
+            if 'age' in report['demographics'] and report['demographics']['age']:
+                ages = list(report['demographics']['age'].keys())
+                if ages:
+                    try:
+                        avg_age = sum(int(age) * count for age, count in report['demographics']['age'].items() 
+                                     if age.isdigit()) / sum(report['demographics']['age'].values())
+                        console.print(f"  Average Age: {avg_age:.1f} years")
+                    except:
+                        pass
+            
+            if 'sex' in report['demographics']:
+                sex_dist = report['demographics']['sex']
+                if sex_dist:
+                    total_sex = sum(sex_dist.values())
+                    for sex, count in sex_dist.items():
+                        console.print(f"  {sex.title()}: {count} ({count/total_sex*100:.1f}%)")
+        
+        # Procedure classifications
+        if report['procedure_classifications']:
+            console.print("\n[bold]Procedure Classifications:[/bold]")
+            for proc_type, procedures in report['procedure_classifications'].items():
+                console.print(f"  • {proc_type.title()}: {len(procedures)}")
+        
+        # Generate outputs
+        if visualize:
+            with console.status("Generating comparative visualizations..."):
+                analyzer.generate_comparative_visualizations(output_path)
+            console.print(f"[{COLORS['success']}]✓ Visualizations saved to {output_path / 'comparative_visualizations'}[/{COLORS['success']}]")
+        
+        if chord:
+            chord_file = output_path / "semantic_chord_diagram.png"
+            with console.status("Generating interactive chord diagram..."):
+                analyzer.generate_chord_diagram(chord_file)
+            console.print(f"[{COLORS['success']}]✓ Interactive chord diagram saved![/{COLORS['success']}]")
+        
+        if validation:
+            validation_file = output_path / f"validation_set_{filter_name}.xlsx"
+            with console.status("Exporting validation set..."):
+                analyzer.export_validation_set(validation_file)
+            console.print(f"[{COLORS['success']}]✓ Validation set saved to {validation_file}[/{COLORS['success']}]")
+        
+        if excel:
+            excel_file = output_path / f"enhanced_{filter_name}_analysis.xlsx"
+            with console.status("Exporting to Excel..."):
+                from .enhanced_analysis import export_enhanced_to_excel
+                export_enhanced_to_excel(analyzer, report, excel_file)
+            console.print(f"[{COLORS['success']}]✓ Excel report saved to {excel_file}[/{COLORS['success']}]")
+        
+        if html_report:
+            html_file = output_path / f"comprehensive_{filter_name}_methodology_report.html"
+            with console.status("Generating comprehensive HTML report with full methodology..."):
+                analyzer.generate_comprehensive_html_report(html_file, report)
+            console.print(f"[{COLORS['success']}]✓ Comprehensive HTML report saved to {html_file}[/{COLORS['success']}]")
+            console.print(f"[{COLORS['info']}]   This report includes the complete extraction methodology and clinical research implications[/{COLORS['info']}]")
+        
+        # Show top concepts by note type
+        if report.get('top_concepts_by_note_type'):
+            console.print("\n[bold]Top Concepts by Note Type:[/bold]")
+            for note_type, concepts in list(report['top_concepts_by_note_type'].items())[:3]:
+                if concepts:
+                    console.print(f"\n[cyan]{note_type}:[/cyan]")
+                    for i, (concept, count) in enumerate(concepts[:3], 1):
+                        console.print(f"  {i}. {concept.split('(')[0][:40]} - {count}")
 
 
 def interactive_mode():

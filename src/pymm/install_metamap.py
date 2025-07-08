@@ -134,8 +134,53 @@ def locate_install_script():
     return found_script
 
 def download_and_extract(url, extract_to_dir, is_source=False):
+    print(f"\n[Download & Extract] Target directory: {extract_to_dir}")
+    
+    # Handle existing directory that might be corrupted or empty
+    if exists(extract_to_dir):
+        try:
+            # Check if directory is empty or only has hidden files
+            contents = os.listdir(extract_to_dir)
+            visible_contents = [f for f in contents if not f.startswith('.')]
+            
+            if not visible_contents:
+                print(f"[Download & Extract] Directory exists but appears empty, removing it...")
+                shutil.rmtree(extract_to_dir)
+                print(f"[Download & Extract] Removed empty directory: {extract_to_dir}")
+            else:
+                print(f"[Download & Extract] Directory exists with {len(visible_contents)} items")
+        except Exception as e:
+            print(f"[Download & Extract] Error checking directory contents: {e}")
+            print(f"[Download & Extract] Attempting to remove and recreate...")
+            try:
+                shutil.rmtree(extract_to_dir)
+                print(f"[Download & Extract] Successfully removed problematic directory")
+            except Exception as e2:
+                print(f"[Download & Extract] Warning: Could not remove directory: {e2}")
+                # Try to continue anyway
+    
     if not exists(extract_to_dir):
-        os.makedirs(extract_to_dir)
+        print(f"[Download & Extract] Creating directory: {extract_to_dir}")
+        try:
+            os.makedirs(extract_to_dir, exist_ok=True)
+        except OSError as e:
+            if e.errno == 17:  # File exists
+                print(f"[Download & Extract] Directory creation failed with 'File exists' error")
+                print(f"[Download & Extract] This might be a WSL/Windows sync issue")
+                print(f"[Download & Extract] Attempting workaround...")
+                # Try to create parent and then the directory
+                parent_dir = os.path.dirname(extract_to_dir)
+                if exists(parent_dir):
+                    try:
+                        # Use a different approach - create with Path
+                        Path(extract_to_dir).mkdir(parents=True, exist_ok=True)
+                        print(f"[Download & Extract] Directory created using alternative method")
+                    except Exception as e3:
+                        print(f"[Download & Extract] Alternative creation also failed: {e3}")
+                        raise
+            else:
+                raise
+
     # Decide canonical filename to save as (ensures we have correct extension for binary kit)
     if IS_BINARY_KIT:
         canonical_filename = "public_mm_linux_main_2020.tar.bz2"
@@ -172,7 +217,8 @@ def download_and_extract(url, extract_to_dir, is_source=False):
         print(f"Tarball {tar_path} already exists locally with size {os.path.getsize(tar_path)}. Skipping download, will proceed to extraction.")
     else:
         # If neither content path nor tarball exists, then download.
-        print(f"Downloading {url}...")
+        print(f"\n[Download] Starting download from: {url}")
+        print(f"[Download] Saving to: {tar_path}")
         try:
             # Add a common browser User-Agent to the request
             headers = {
@@ -184,9 +230,10 @@ def download_and_extract(url, extract_to_dir, is_source=False):
             total_size = int(response.getheader('Content-Length', 0))
             block_size = 8192 # 8KB per chunk
             
+            print(f"[Download] File size: {total_size:,} bytes ({total_size/1024/1024:.1f} MB)")
             with (
                 open(tar_path, 'wb') as out_file,
-                tqdm(total=total_size, unit='B', unit_scale=True, desc=tar_filename, ascii=True) as pbar
+                tqdm(total=total_size, unit='B', unit_scale=True, desc="Downloading", ascii=True) as pbar
             ):
                 while True:
                     chunk = response.read(block_size)
@@ -195,7 +242,7 @@ def download_and_extract(url, extract_to_dir, is_source=False):
                     out_file.write(chunk)
                     pbar.update(len(chunk))
         except Exception as e:
-            print(f"Error during download: {e}")
+            print(f"\n[Download] Error during download: {e}")
             # Try falling back to urlretrieve if the chunked download failed (e.g. no Content-Length)
             try:
                 print("Falling back to simple download...")
@@ -252,8 +299,10 @@ def download_and_extract(url, extract_to_dir, is_source=False):
             print(f"Warning: Could not rename tarball: {e_rename}. Continuing with original filename.")
 
     # First attempt high-performance system tar extraction
+    print(f"\n[Extract] Attempting extraction of {tar_path}...")
+    print(f"[Extract] Compression mode: {mode}")
     if extract_with_system_tar(tar_path, extract_to_dir, mode):
-        print("System tar extraction completed.")
+        print("[Extract] ✓ System tar extraction completed successfully.")
         return True
 
     # Fallback to pure-Python extraction with path safety
@@ -273,7 +322,7 @@ def download_and_extract(url, extract_to_dir, is_source=False):
                 if not _is_within_directory(extract_to_dir, member_path):
                     raise RuntimeError(f"Unsafe path in tar file: {member.name}")
             tar.extractall(path=extract_to_dir)
-        print(f"Successfully extracted {tar_filename}.")
+        print(f"[Extract] ✓ Successfully extracted {tar_filename} using Python tarfile.")
         return True # Indicate success
     except tarfile.ReadError as e:
         print(f"Error reading tar file {tar_path} with mode {mode}. It might not be a valid {mode.split(':')[1] if ':' in mode else 'tar'} compressed tar file or the download failed. Error: {e}")
@@ -301,7 +350,8 @@ def extract_with_system_tar(tar_path: str, dest_dir: str, mode: str) -> bool:
     os.makedirs(dest_dir, exist_ok=True)
     # Build cmd parts safely without shell=True
     cmd_parts = ["tar"] + (comp_prog.split() if comp_prog else []) + ["-xvf", tar_path, "-C", dest_dir]
-    print(f"Using system tar for extraction (streaming output): {' '.join(cmd_parts)}")
+    print(f"[Extract] Using system tar for extraction: {' '.join(cmd_parts)}")
+    print("[Extract] Extraction progress:")
     process = subprocess.Popen(cmd_parts, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     if process.stdout:
         for line in iter(process.stdout.readline, ''):
@@ -311,11 +361,14 @@ def extract_with_system_tar(tar_path: str, dest_dir: str, mode: str) -> bool:
     return ret == 0
 
 def run_install_script():
-    print(f"Attempting to run install script: {INST_SCRIPT}")
+    print(f"\n[Install Script] Starting MetaMap installation script...")
+    print(f"[Install Script] Script location: {INST_SCRIPT}")
     install_script_dir = os.path.dirname(INST_SCRIPT)            # …/public_mm/bin
     public_mm_dir = os.path.dirname(install_script_dir)          # …/public_mm (one level up)
 
     # Decide where to execute the script from so that the default basedir is correct
+    print(f"[Install Script] Script directory: {install_script_dir}")
+    print(f"[Install Script] Public MM directory: {public_mm_dir}")
     # If the install script is inside a conventional …/public_mm/bin/ directory, run from
     # public_mm and invoke "bash bin/install.sh". Otherwise fall back to the old behaviour.
     if (
@@ -329,7 +382,8 @@ def run_install_script():
         cmd = ["./" + os.path.basename(INST_SCRIPT)]
 
     if exists(INST_SCRIPT):
-        print(f"Executing installer from: {run_cwd}  ->  {' '.join(cmd)}")
+        print(f"[Install Script] Executing from directory: {run_cwd}")
+        print(f"[Install Script] Command: {' '.join(cmd)}")
         subprocess.call(["chmod", "+x", INST_SCRIPT])
         try:
             process = subprocess.Popen(cmd, cwd=run_cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
@@ -346,10 +400,10 @@ def run_install_script():
             process.wait()
             
             if process.returncode == 0:
-                print(f"\nInstallation script finished successfully (return code 0).")
+                print(f"\n[Install Script] ✓ Installation script finished successfully (return code 0).")
                 return True
             else:
-                print(f"\nInstallation script failed (return code {process.returncode}). Check output above for errors.")
+                print(f"\n[Install Script] ✗ Installation script failed (return code {process.returncode}). Check output above for errors.")
                 return False
         except Exception as e:
             print(f"\nError running install.sh: {e}")
@@ -361,10 +415,12 @@ def run_install_script():
         return False
 
 def test_metamap_installation(metamap_binary_path):
-    print("\nAttempting to test MetaMap installation...")
+    print("\n" + "="*70)
+    print("Testing MetaMap Installation")
+    print("="*70)
     if not exists(metamap_binary_path):
-        print(f"MetaMap binary not found at the expected path: {metamap_binary_path}")
-        print("Test cannot proceed. Please verify the installation.")
+        print(f"[Test] ✗ MetaMap binary not found at: {metamap_binary_path}")
+        print("[Test] Test cannot proceed. Please verify the installation.")
         return
 
     # Add src to sys.path to import pymm
@@ -376,14 +432,15 @@ def test_metamap_installation(metamap_binary_path):
     
     try:
         from pymm import Metamap
-        print(f"Initializing Metamap with binary: {metamap_binary_path}")
+        print(f"[Test] Initializing Metamap with binary: {metamap_binary_path}")
         # For testing, ensure METAMAP_PROCESSING_OPTIONS is unset or uses benign defaults
         # or cmdexecutor.py handles it. We assume default options in cmdexecutor are okay for a basic test.
         # os.environ.pop('METAMAP_PROCESSING_OPTIONS', None) # Optional: ensure no conflicting opts
         
         mm = Metamap(metamap_binary_path, debug=False) # Debug false for cleaner test output
         test_sentences = ["The patient reported heart attack and chest pain."]
-        print(f"Parsing test sentence: '{test_sentences[0]}'")
+        print(f"[Test] Test sentence: '{test_sentences[0]}'")
+        print("[Test] Running MetaMap analysis...")
         mmos = mm.parse(test_sentences, timeout=60) # Generous timeout for first run
         
         concepts_found = []
@@ -393,10 +450,12 @@ def test_metamap_installation(metamap_binary_path):
                     concepts_found.append(concept)
         
         if concepts_found:
-            print(f"SUCCESS: MetaMap test found {len(concepts_found)} concepts.")
-            print("Example concept CUI:", concepts_found[0].cui)
+            print(f"\n[Test] ✓ SUCCESS: MetaMap found {len(concepts_found)} concepts")
+            print(f"[Test] Example concept: CUI={concepts_found[0].cui}, Preferred Name={concepts_found[0].preferred_name}")
+            print("\n[Test] MetaMap is working correctly!")
         else:
-            print("WARNING: MetaMap test ran but found no concepts. This might indicate an issue with data files or configuration.")
+            print("\n[Test] ⚠ WARNING: MetaMap ran but found no concepts.")
+            print("[Test] This might indicate an issue with data files or configuration.")
         mm.close() # Clean up temp files
 
     except ImportError:
@@ -407,20 +466,81 @@ def test_metamap_installation(metamap_binary_path):
         traceback.print_exc()
 
 def main():
-    print("Starting MetaMap 2020 Download & Installation Process...")
+    print("\n" + "="*70)
+    print("MetaMap 2020 Installation Process")
+    print("="*70)
+    print(f"\n[Config] Installation directory: {META_INSTALL_DIR}")
+    print(f"[Config] Expected binary location: {EXPECTED_METAMAP_BINARY}")
+    print(f"[Config] Source directory name: {SOURCE_DIR_NAME}")
 
     # Check for a fully completed installation first (e.g. metamap_install/public_mm/bin/metamap)
+    print("\n[Check] Looking for existing MetaMap installation...")
     if exists(EXPECTED_METAMAP_BINARY) and os.access(EXPECTED_METAMAP_BINARY, os.X_OK):
-        print(f"\nMetaMap appears to be already installed and executable at: {EXPECTED_METAMAP_BINARY}")
+        print(f"[Check] ✓ MetaMap found at: {EXPECTED_METAMAP_BINARY}")
+        print(f"[Check] Binary is executable: Yes")
+        
+        # Provide clear options for existing installation
+        print("\n[Options] MetaMap is already installed. What would you like to do?")
+        print("  1. Keep existing installation and exit")
+        print("  2. Run install.sh script to reconfigure")
+        print("  3. Complete reinstallation (remove and reinstall)")
+        
         if os.getenv("PYMM_FORCE_REINSTALL", "").lower() in {"yes", "true", "1"}:
-            choice = "yes"
+            choice = "3"
         elif not sys.stdin.isatty():
-            choice = "no"
+            choice = "1"
         else:
-            choice = input("Do you want to remove the existing 'public_mm' directory and reinstall? (yes/no): ").strip().lower()
-        if choice == 'yes':
+            choice = input("\nSelect option [1/2/3] (default: 1): ").strip() or "1"
+        
+        if choice == "1":
+            print("\n[Decision] Keeping existing installation.")
+            test_metamap_installation(EXPECTED_METAMAP_BINARY)
+            return EXPECTED_METAMAP_BINARY
+            
+        elif choice == "2":
+            print("\n[Decision] Running install.sh script to reconfigure...")
+            install_script_path = os.path.join(META_INSTALL_DIR, "public_mm", "bin", "install.sh")
+            if os.path.exists(install_script_path):
+                print(f"Running install script: {install_script_path}")
+                # Setup the running environment
+                install_script_dir = os.path.dirname(install_script_path)
+                public_mm_dir = os.path.dirname(install_script_dir)
+                
+                # Run the script - similar to run_install_script() but with specific path
+                try:
+                    subprocess.call(["chmod", "+x", install_script_path])
+                    print(f"Executing installer from: {public_mm_dir}")
+                    process = subprocess.Popen(["bash", "bin/install.sh"], cwd=public_mm_dir, 
+                                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                             text=True, bufsize=1)
+                    
+                    # Stream output with tqdm
+                    if process.stdout:
+                        with tqdm(desc="install.sh output", unit=" lines", ascii=True) as pbar:
+                            for line in iter(process.stdout.readline, ''):
+                                sys.stdout.write(line)
+                                sys.stdout.flush()
+                                pbar.update(1)
+                        process.stdout.close()
+                    
+                    process.wait()
+                    
+                    if process.returncode == 0:
+                        print(f"\n[Install Script] ✓ Installation script finished successfully (return code 0).")
+                        test_metamap_installation(EXPECTED_METAMAP_BINARY)
+                    else:
+                        print(f"\n[Install Script] ✗ Installation script failed (return code {process.returncode}). Check output above for errors.")
+                except Exception as e:
+                    print(f"\nError running install.sh: {e}")
+            else:
+                print(f"[Error] Install script not found at: {install_script_path}")
+            
+            return EXPECTED_METAMAP_BINARY
+            
+        elif choice == "3":
+            print("\n[Decision] Performing complete reinstallation...")
             public_mm_actual_path = os.path.join(META_INSTALL_DIR, "public_mm")
-            print(f"Removing existing installation directory: {public_mm_actual_path}...")
+            print(f"\n[Cleanup] Removing existing installation directory: {public_mm_actual_path}...")
             try:
                 if os.path.exists(public_mm_actual_path):
                     shutil.rmtree(public_mm_actual_path)
@@ -429,55 +549,42 @@ def main():
                 local_tar_path = os.path.join(META_INSTALL_DIR, tar_filename_guess)
                 if os.path.exists(local_tar_path):
                     os.remove(local_tar_path)
-                print("Existing installation artifacts removed.")
+                # Also check for renamed tarball
+                canonical_tar_path = os.path.join(META_INSTALL_DIR, "public_mm_linux_main_2020.tar.bz2")
+                if os.path.exists(canonical_tar_path):
+                    os.remove(canonical_tar_path)
+                print("[Cleanup] ✓ Existing installation artifacts removed successfully.")
             except Exception as e:
                 print(f"Error removing existing installation: {e}. Please remove it manually and try again.")
                 return None # Exit if removal fails
         else:
-            print("Skipping reinstallation. Using existing installation.")
-            
-            # New code to ask if user wants to run the install.sh script without removing the installation
-            install_script_path = os.path.join(META_INSTALL_DIR, "public_mm", "bin", "install.sh")
-            if os.path.exists(install_script_path):
-                run_script_choice = input(f"Would you like to run the MetaMap install script ({install_script_path}) in place? (yes/no): ").strip().lower()
-                if run_script_choice == 'yes':
-                    print(f"Running install script: {install_script_path}")
-                    # Setup the running environment
-                    install_script_dir = os.path.dirname(install_script_path)
-                    public_mm_dir = os.path.dirname(install_script_dir)
-                    
-                    # Run the script - similar to run_install_script() but with specific path
-                    try:
-                        subprocess.call(["chmod", "+x", install_script_path])
-                        print(f"Executing installer from: {public_mm_dir}")
-                        process = subprocess.Popen(["bash", "bin/install.sh"], cwd=public_mm_dir, 
-                                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
-                                                 text=True, bufsize=1)
-                        
-                        # Stream output with tqdm
-                        if process.stdout:
-                            with tqdm(desc="install.sh output", unit=" lines", ascii=True) as pbar:
-                                for line in iter(process.stdout.readline, ''):
-                                    sys.stdout.write(line)
-                                    sys.stdout.flush()
-                                    pbar.update(1)
-                            process.stdout.close()
-                        
-                        process.wait()
-                        
-                        if process.returncode == 0:
-                            print(f"\nInstallation script finished successfully (return code 0).")
-                            test_metamap_installation(EXPECTED_METAMAP_BINARY)
-                        else:
-                            print(f"\nInstallation script failed (return code {process.returncode}). Check output above for errors.")
-                    except Exception as e:
-                        print(f"\nError running install.sh: {e}")
-            
-            return EXPECTED_METAMAP_BINARY # Return path to existing binary
+            print(f"\n[Error] Invalid option: {choice}")
+            return EXPECTED_METAMAP_BINARY
     
     # If not fully installed, print advisory messages
-    print("This script will attempt to download the MetaMap 2020 archive specified by MAIN_URL:")
-    print(f"  URL: {MAIN_URL}")
+    print("\n[Installation] MetaMap is not installed. Starting installation process...")
+    print(f"[Installation] Download URL: {MAIN_URL}")
+    print(f"[Installation] Installation directory: {META_INSTALL_DIR}")
+    
+    # Check if installation directory exists but might be problematic
+    if os.path.exists(META_INSTALL_DIR):
+        try:
+            contents = os.listdir(META_INSTALL_DIR)
+            if not contents or all(f.startswith('.') for f in contents):
+                print(f"[Installation] Found empty or problematic installation directory")
+                if sys.stdin.isatty():
+                    cleanup = input("Remove and recreate installation directory? (yes/no) [yes]: ").strip().lower()
+                    if cleanup != 'no':
+                        print(f"[Installation] Removing {META_INSTALL_DIR}...")
+                        shutil.rmtree(META_INSTALL_DIR)
+                        print("[Installation] Directory removed successfully")
+                else:
+                    # Non-interactive mode - try to clean up automatically
+                    print(f"[Installation] Automatically cleaning up {META_INSTALL_DIR}...")
+                    shutil.rmtree(META_INSTALL_DIR)
+        except Exception as e:
+            print(f"[Installation] Warning: Error checking installation directory: {e}")
+    
     if IS_BINARY_KIT:
         print("This appears to be a BINARY kit (includes pre-compiled MetaMap and data files).")
         print("The script will extract it and run its internal setup (install.sh).")
@@ -488,9 +595,30 @@ def main():
     print("It is highly recommended to consult the official NLM MetaMap installation documentation.")
     print("This process works best in a Linux or WSL environment.\n")
 
-    if not download_and_extract(MAIN_URL, META_INSTALL_DIR, is_source=IS_BINARY_KIT):
-        print("Download or extraction failed. Aborting installation.")
-        return None
+    try:
+        if not download_and_extract(MAIN_URL, META_INSTALL_DIR, is_source=IS_BINARY_KIT):
+            print("\n[Error] Download or extraction failed. Aborting installation.")
+            return None
+    except Exception as e:
+        print(f"\n[Error] Installation failed: {e}")
+        
+        # Offer to clean up and retry
+        if "File exists" in str(e) and sys.stdin.isatty():
+            print("\n[Error] This appears to be a file system synchronization issue.")
+            retry = input("Would you like to clean up and retry? (yes/no) [yes]: ").strip().lower()
+            if retry != 'no':
+                try:
+                    if os.path.exists(META_INSTALL_DIR):
+                        shutil.rmtree(META_INSTALL_DIR)
+                    print("[Cleanup] Directory removed. Retrying installation...")
+                    if not download_and_extract(MAIN_URL, META_INSTALL_DIR, is_source=IS_BINARY_KIT):
+                        print("\n[Error] Download or extraction failed on retry.")
+                        return None
+                except Exception as e2:
+                    print(f"\n[Error] Cleanup and retry failed: {e2}")
+                    return None
+        else:
+            return None
 
     # --- Enhanced Debugging ---
     print(f"DEBUG: Listing contents of META_INSTALL_DIR ({META_INSTALL_DIR}):")
@@ -513,10 +641,13 @@ def main():
     print("DEBUG: --- End of directory listing ---")
     # --- End Enhanced Debugging ---
 
+    print("\n[Search] Looking for MetaMap binary in extracted files...")
     auto_binary = locate_metamap_binary()
     if auto_binary:
-        print(f"Found MetaMap binary without running install.sh: {auto_binary}")
+        print(f"[Search] ✓ Found MetaMap binary: {auto_binary}")
         return auto_binary
+    else:
+        print("[Search] Binary not found. Need to run installation script.")
 
     # If not found, try to locate and run install.sh wherever it was extracted
     dynamic_install_script = locate_install_script()
@@ -538,13 +669,14 @@ def main():
     if install_successful:
         # Check if the binary exists as a primary indicator of success for programmatic calls
         if os.path.exists(EXPECTED_METAMAP_BINARY):
-            print(f"MetaMap installation script finished. Binary found at: {EXPECTED_METAMAP_BINARY}")
+            print(f"\n[Summary] MetaMap installation completed successfully!")
+            print(f"[Summary] Binary location: {EXPECTED_METAMAP_BINARY}")
             # Optionally run the test if called directly, but for import, binary existence is key.
             if __name__ == "__main__":
                 test_metamap_installation(EXPECTED_METAMAP_BINARY)
             return EXPECTED_METAMAP_BINARY
         else:
-            print(f"\nInstallation script finished, but MetaMap binary not found at expected location: {EXPECTED_METAMAP_BINARY}")
+            print(f"\n[Summary] ✗ Installation script finished, but MetaMap binary not found at: {EXPECTED_METAMAP_BINARY}")
             # Final attempt: maybe binary exists even though install script failed
             fallback_bin = locate_metamap_binary()
             if fallback_bin:
@@ -552,12 +684,15 @@ def main():
                 return fallback_bin
             return None
     else:
-        print("\nInstallation script failed or did not run. Skipping post-installation test.")
+        print("\n[Summary] Installation script failed or did not run.")
         # Final attempt: maybe binary exists even though install script failed
+        print("[Summary] Searching for MetaMap binary...")
         fallback_bin = locate_metamap_binary()
         if fallback_bin:
-            print(f"MetaMap binary detected at: {fallback_bin}")
+            print(f"[Summary] ✓ MetaMap binary found at: {fallback_bin}")
             return fallback_bin
+        else:
+            print("[Summary] ✗ No MetaMap binary found")
         return None
 
     # The following is now largely unreachable due to returns above, but kept for context if __main__ block changes

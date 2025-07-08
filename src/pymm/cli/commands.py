@@ -9,8 +9,10 @@ from pathlib import Path
 from datetime import datetime
 from rich import box
 import subprocess
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeRemainingColumn
+import time
 
-from ..core.config import PyMMConfig
+from ..core.config import PyMMConfig, Config
 from ..server.manager import ServerManager
 from ..server.port_guard import PortGuard
 from ..core.state import StateManager
@@ -494,6 +496,7 @@ def concept_stats(output_dir, top, min_count):
     concept_counter = Counter()
     semantic_type_counter = Counter()
     file_count = 0
+    total_rows = 0
     
     # Read all CSV files
     for csv_file in output_path.glob("*.csv"):
@@ -502,25 +505,50 @@ def concept_stats(output_dir, top, min_count):
             
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
+                # Skip the start marker line
+                first_line = f.readline()
+                if not first_line.startswith("META_BATCH_START"):
+                    f.seek(0)  # Reset if no marker
+                
                 reader = csv.DictReader(f)
+                file_has_concepts = False
+                
                 for row in reader:
-                    if 'preferred_name' in row and 'cui' in row:
-                        concept = f"{row['preferred_name']} ({row['cui']})"
+                    # Skip empty rows or end marker
+                    if not row or 'META_BATCH' in str(row.get('CUI', '')):
+                        continue
+                    
+                    total_rows += 1
+                    
+                    # Get concept info - check both possible column names
+                    cui = row.get('CUI', '').strip()
+                    pref_name = row.get('PrefName', row.get('preferred_name', '')).strip()
+                    
+                    if cui and pref_name:
+                        concept = f"{pref_name} ({cui})"
                         concept_counter[concept] += 1
-                        
-                    if 'semantic_types' in row:
-                        sem_types = row['semantic_types'].strip('[]').split(',')
-                        for st in sem_types:
+                        file_has_concepts = True
+                    
+                    # Get semantic types - check both possible column names
+                    sem_types = row.get('SemTypes', row.get('semantic_types', '')).strip()
+                    if sem_types:
+                        # Handle different formats
+                        sem_types = sem_types.strip('[]')
+                        for st in sem_types.split(','):
                             st = st.strip().strip("'\"")
                             if st:
                                 semantic_type_counter[st] += 1
-                                
-            file_count += 1
+                
+                if file_has_concepts:
+                    file_count += 1
+                    
         except Exception as e:
             console.print(f"[yellow]Warning: Error reading {csv_file.name}: {e}[/yellow]")
     
     if not concept_counter:
         console.print("[yellow]No concepts found in output files[/yellow]")
+        console.print(f"[dim]Checked {len(list(output_path.glob('*.csv')))} CSV files[/dim]")
+        console.print(f"[dim]Found {total_rows} data rows[/dim]")
         return
     
     # Display results
@@ -535,29 +563,34 @@ def concept_stats(output_dir, top, min_count):
     
     total_concepts = sum(concept_counter.values())
     
-    for i, (concept, count) in enumerate(concept_counter.most_common(top), 1):
+    shown = 0
+    for i, (concept, count) in enumerate(concept_counter.most_common(), 1):
         if count < min_count:
+            break
+        if shown >= top:
             break
         freq = f"{(count/total_concepts)*100:.1f}%"
         concept_table.add_row(str(i), concept, str(count), freq)
+        shown += 1
     
     console.print(concept_table)
     
     # Semantic types table
-    console.print(f"\n[bold]Top Semantic Types[/bold]\n")
-    
-    sem_table = Table(title="Semantic Type Distribution")
-    sem_table.add_column("Semantic Type", style="blue")
-    sem_table.add_column("Count", style="yellow")
-    sem_table.add_column("Percentage", style="dim")
-    
-    total_sem_types = sum(semantic_type_counter.values())
-    
-    for sem_type, count in semantic_type_counter.most_common(10):
-        pct = f"{(count/total_sem_types)*100:.1f}%"
-        sem_table.add_row(sem_type, str(count), pct)
-    
-    console.print(sem_table)
+    if semantic_type_counter:
+        console.print(f"\n[bold]Top Semantic Types[/bold]\n")
+        
+        sem_table = Table(title="Semantic Type Distribution")
+        sem_table.add_column("Semantic Type", style="blue")
+        sem_table.add_column("Count", style="yellow")
+        sem_table.add_column("Percentage", style="dim")
+        
+        total_sem_types = sum(semantic_type_counter.values())
+        
+        for sem_type, count in semantic_type_counter.most_common(10):
+            pct = f"{(count/total_sem_types)*100:.1f}%"
+            sem_table.add_row(sem_type, str(count), pct)
+        
+        console.print(sem_table)
     
     # Summary statistics
     console.print(f"\n[bold]Summary:[/bold]")
@@ -565,6 +598,243 @@ def concept_stats(output_dir, top, min_count):
     console.print(f"  • Total concept occurrences: {total_concepts:,}")
     console.print(f"  • Average concepts per file: {total_concepts/file_count:.1f}")
     console.print(f"  • Total semantic types: {len(semantic_type_counter)}")
+
+@stats_group.command(name='explore')
+@click.argument('output_dir', type=click.Path(exists=True))
+@click.option('--detailed', '-d', is_flag=True, help='Show detailed file analysis')
+@click.option('--concepts', '-c', is_flag=True, help='Include concept analysis')
+def explore_output(output_dir, detailed, concepts):
+    """Comprehensive exploration of output directory"""
+    from pathlib import Path
+    import csv
+    from collections import Counter
+    from datetime import datetime
+    import os
+    
+    output_path = Path(output_dir)
+    console.print(f"\n[bold cyan]Output Directory Analysis[/bold cyan]")
+    console.print(f"Directory: {output_path.absolute()}\n")
+    
+    # Collect all CSV files
+    csv_files = list(output_path.glob("*.csv"))
+    csv_files = [f for f in csv_files if not f.name.startswith('.')]
+    
+    if not csv_files:
+        console.print("[red]No CSV output files found![/red]")
+        return
+    
+    # Analyze files
+    complete_files = []
+    partial_files = []
+    failed_files = []
+    empty_files = []
+    
+    total_size = 0
+    total_concepts = 0
+    concept_counter = Counter()
+    semantic_type_counter = Counter()
+    
+    for csv_file in csv_files:
+        file_size = csv_file.stat().st_size
+        total_size += file_size
+        
+        # Check file status
+        try:
+            with open(csv_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+                # Check for markers
+                has_start = "META_BATCH_START_NOTE_ID:" in content
+                has_end = "META_BATCH_END_NOTE_ID:" in content
+                has_error = ":ERROR" in content
+                
+                # Count concepts
+                f.seek(0)
+                reader = csv.DictReader(f)
+                concept_count = 0
+                
+                for row in reader:
+                    # Skip marker lines
+                    if not row or 'META_BATCH' in str(row.get('CUI', '')):
+                        continue
+                        
+                    concept_count += 1
+                    
+                    # Track concepts for analysis
+                    if concepts:
+                        cui = row.get('CUI', '').strip()
+                        pref_name = row.get('PrefName', '').strip()
+                        if cui and pref_name:
+                            concept_key = f"{pref_name} ({cui})"
+                            concept_counter[concept_key] += 1
+                        
+                        # Track semantic types
+                        sem_types = row.get('SemTypes', '').strip()
+                        if sem_types:
+                            for st in sem_types.split(','):
+                                st = st.strip()
+                                if st:
+                                    semantic_type_counter[st] += 1
+                
+                total_concepts += concept_count
+                
+                # Categorize file
+                if file_size < 100:
+                    empty_files.append((csv_file, file_size))
+                elif has_error or (has_start and not has_end):
+                    failed_files.append((csv_file, file_size, concept_count))
+                elif has_start and has_end:
+                    complete_files.append((csv_file, file_size, concept_count))
+                else:
+                    partial_files.append((csv_file, file_size, concept_count))
+                    
+        except Exception as e:
+            failed_files.append((csv_file, file_size, 0))
+            console.print(f"[yellow]Warning: Error reading {csv_file.name}: {e}[/yellow]")
+    
+    # Display summary statistics
+    summary_table = Table(title="Output File Summary", box=box.ROUNDED)
+    summary_table.add_column("Category", style="cyan")
+    summary_table.add_column("Count", style="green")
+    summary_table.add_column("Percentage", style="yellow")
+    
+    total_files = len(csv_files)
+    summary_table.add_row("Total Files", str(total_files), "100.0%")
+    summary_table.add_row("Complete", str(len(complete_files)), f"{len(complete_files)/total_files*100:.1f}%")
+    summary_table.add_row("Partial", str(len(partial_files)), f"{len(partial_files)/total_files*100:.1f}%")
+    summary_table.add_row("Failed", str(len(failed_files)), f"{len(failed_files)/total_files*100:.1f}%")
+    summary_table.add_row("Empty", str(len(empty_files)), f"{len(empty_files)/total_files*100:.1f}%")
+    
+    console.print(summary_table)
+    
+    # Storage statistics
+    console.print(f"\n[bold]Storage Statistics:[/bold]")
+    console.print(f"  Total Size: {total_size / 1024 / 1024:.2f} MB")
+    console.print(f"  Average File Size: {total_size / total_files / 1024:.2f} KB")
+    console.print(f"  Total Concepts Extracted: {total_concepts:,}")
+    if complete_files:
+        avg_concepts = sum(f[2] for f in complete_files) / len(complete_files)
+        console.print(f"  Average Concepts per Complete File: {avg_concepts:.1f}")
+    
+    # Show detailed file lists if requested
+    if detailed:
+        # Failed files
+        if failed_files:
+            console.print(f"\n[bold red]Failed Files ({len(failed_files)}):[/bold red]")
+            failed_table = Table(box=box.SIMPLE)
+            failed_table.add_column("File", style="red")
+            failed_table.add_column("Size", style="dim")
+            failed_table.add_column("Concepts", style="dim")
+            
+            for f, size, concepts in sorted(failed_files)[:10]:
+                failed_table.add_row(f.name, f"{size/1024:.1f} KB", str(concepts))
+            
+            console.print(failed_table)
+            if len(failed_files) > 10:
+                console.print(f"[dim]... and {len(failed_files) - 10} more[/dim]")
+        
+        # Empty files
+        if empty_files:
+            console.print(f"\n[bold yellow]Empty Files ({len(empty_files)}):[/bold yellow]")
+            for f, size in sorted(empty_files)[:5]:
+                console.print(f"  • {f.name} ({size} bytes)")
+            if len(empty_files) > 5:
+                console.print(f"[dim]... and {len(empty_files) - 5} more[/dim]")
+    
+    # Concept analysis if requested
+    if concepts and concept_counter:
+        console.print(f"\n[bold]Top Concepts Analysis:[/bold]")
+        
+        # Top concepts
+        concept_table = Table(title="Top 15 Most Frequent Concepts", box=box.ROUNDED)
+        concept_table.add_column("Rank", style="cyan")
+        concept_table.add_column("Concept (CUI)", style="green")
+        concept_table.add_column("Count", style="yellow")
+        concept_table.add_column("Files", style="dim")
+        
+        # Track which files contain each concept
+        concept_files = Counter()
+        for csv_file in complete_files + partial_files:
+            try:
+                with open(csv_file[0], 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    file_concepts = set()
+                    
+                    for row in reader:
+                        if not row or 'META_BATCH' in str(row.get('CUI', '')):
+                            continue
+                        cui = row.get('CUI', '').strip()
+                        pref_name = row.get('PrefName', '').strip()
+                        if cui and pref_name:
+                            concept_key = f"{pref_name} ({cui})"
+                            file_concepts.add(concept_key)
+                    
+                    for concept in file_concepts:
+                        concept_files[concept] += 1
+                        
+            except:
+                pass
+        
+        for i, (concept, count) in enumerate(concept_counter.most_common(15), 1):
+            file_count = concept_files.get(concept, 0)
+            concept_table.add_row(str(i), concept, str(count), f"{file_count} files")
+        
+        console.print(concept_table)
+        
+        # Semantic types
+        if semantic_type_counter:
+            sem_table = Table(title="Top 10 Semantic Types", box=box.ROUNDED)
+            sem_table.add_column("Type", style="blue")
+            sem_table.add_column("Count", style="yellow")
+            sem_table.add_column("Percentage", style="dim")
+            
+            total_sem = sum(semantic_type_counter.values())
+            for sem_type, count in semantic_type_counter.most_common(10):
+                pct = f"{(count/total_sem)*100:.1f}%"
+                sem_table.add_row(sem_type, str(count), pct)
+            
+            console.print(sem_table)
+    
+    # Check state file
+    state_file = output_path / ".pymm_state.json"
+    if state_file.exists():
+        console.print(f"\n[bold]Processing State:[/bold]")
+        try:
+            import json
+            with open(state_file, 'r') as f:
+                state = json.load(f)
+            
+            stats = state.get('statistics', {})
+            state_table = Table(box=box.SIMPLE)
+            state_table.add_column("Metric", style="cyan")
+            state_table.add_column("Value", style="green")
+            
+            state_table.add_row("Session Started", state.get('started', 'Unknown'))
+            state_table.add_row("Last Updated", state.get('last_updated', 'Unknown'))
+            state_table.add_row("Total Files", str(stats.get('total_files', 0)))
+            state_table.add_row("Completed", str(stats.get('completed', 0)))
+            state_table.add_row("Failed", str(stats.get('failed', 0)))
+            
+            console.print(state_table)
+            
+            # Check for discrepancies
+            state_completed = stats.get('completed', 0)
+            actual_completed = len(complete_files)
+            if state_completed != actual_completed:
+                console.print(f"\n[yellow]⚠ Discrepancy detected:[/yellow]")
+                console.print(f"  State shows {state_completed} completed files")
+                console.print(f"  But found {actual_completed} complete CSV files")
+                
+        except Exception as e:
+            console.print(f"[yellow]Could not read state file: {e}[/yellow]")
+    
+    # Recommendations
+    if failed_files or empty_files:
+        console.print(f"\n[bold]Recommendations:[/bold]")
+        if failed_files:
+            console.print(f"  • Retry {len(failed_files)} failed files: [cyan]pymm retry {output_dir}[/cyan]")
+        if empty_files:
+            console.print(f"  • Check {len(empty_files)} empty input files")
 
 @click.command()
 @click.option('--output-dir', '-o', type=click.Path(exists=True), 
@@ -658,3 +928,257 @@ def monitor(output_dir, follow, stats):
                 console.print("[yellow]No log files found[/yellow]")
         else:
             console.print("[yellow]No logs directory found[/yellow]")
+
+@click.command()
+@click.argument('output_dir', type=click.Path(exists=True))
+@click.option('--max-attempts', default=3, help='Maximum retry attempts')
+@click.option('--workers', default=4, help='Number of parallel workers')
+@click.pass_context
+def retry(ctx, output_dir, max_attempts, workers):
+    """Retry failed files from a previous run"""
+    from ..processing.batch_runner import BatchRunner
+    from ..core.state import StateManager
+    from ..core.config import PyMMConfig
+    
+    # Load configuration
+    config = ctx.obj['config']
+    config['retry_max_attempts'] = max_attempts
+    config['max_parallel_workers'] = workers
+    
+    # Load state to find failed files
+    state_manager = StateManager(output_dir)
+    failed_files = list(state_manager._state.get('failed_files', {}).keys())
+    
+    if not failed_files:
+        click.echo("No failed files to retry")
+        return
+    
+    click.echo(f"Found {len(failed_files)} failed files to retry")
+    
+    # Get input directory from first failed file
+    if failed_files:
+        first_file = Path(failed_files[0])
+        if first_file.exists():
+            input_dir = first_file.parent
+        else:
+            click.echo("Cannot determine input directory from failed files", err=True)
+            return
+    
+    # Create runner and retry
+    runner = BatchRunner(str(input_dir), output_dir, config)
+    
+    # Process only failed files
+    from ..processing.retry import RetryManager
+    retry_manager = RetryManager(config, state_manager)
+    
+    def process_func(file_path):
+        file = Path(file_path)
+        if runner.use_instance_pool:
+            return runner._process_file_with_pool(file)
+        else:
+            return runner._process_file_direct(file)
+    
+    results = retry_manager.retry_failed_files(failed_files, process_func)
+    
+    # Show results
+    click.echo(f"\nRetry Results:")
+    click.echo(f"  Attempted: {results['attempted']}")
+    click.echo(f"  Recovered: {results['recovered']}")
+    click.echo(f"  Still Failed: {len(results['still_failed'])}")
+    click.echo(f"  Skipped: {len(results['skipped'])}")
+    
+    if results['still_failed']:
+        click.echo(f"\nFiles still failing after retry:")
+        for file in results['still_failed'][:10]:
+            click.echo(f"  - {Path(file).name}")
+        if len(results['still_failed']) > 10:
+            click.echo(f"  ... and {len(results['still_failed']) - 10} more")
+
+@click.command(name='retry-failed')
+@click.argument('output_dir', type=click.Path(exists=True))
+@click.option('--config', '-c', type=click.Path(exists=True), help='Config file path')
+@click.option('--max-attempts', default=3, help='Maximum retry attempts per file')
+@click.option('--delay', default=5, help='Delay between retries in seconds')
+@click.option('--filter-error', help='Only retry files with specific error type')
+@click.option('--dry-run', is_flag=True, help='Show what would be retried without actually processing')
+def retry_failed(output_dir, config, max_attempts, delay, filter_error, dry_run):
+    """Retry failed files from a previous processing session
+    
+    This command reads the state file from a previous session and retries
+    all failed files that haven't exceeded the maximum retry attempts.
+    
+    Examples:
+    
+        # Retry all failed files
+        pymm retry-failed output_csvs/
+        
+        # Only retry timeout errors
+        pymm retry-failed output_csvs/ --filter-error timeout
+        
+        # Dry run to see what would be retried
+        pymm retry-failed output_csvs/ --dry-run
+    """
+    from pathlib import Path
+    import json
+    import time
+    from ..processing.batch_runner import BatchRunner
+    from ..core.config import Config
+    
+    output_path = Path(output_dir)
+    state_file = output_path / ".pymm_state.json"
+    
+    if not state_file.exists():
+        console.print("[red]No state file found. Cannot retry without previous session data.[/red]")
+        return
+    
+    # Load state
+    with open(state_file, 'r') as f:
+        state = json.load(f)
+    
+    # Get failed files
+    failed_files = state.get('failed_files', {})
+    if not failed_files:
+        console.print("[green]No failed files to retry![/green]")
+        return
+    
+    # Filter candidates
+    retry_candidates = []
+    for file_path, error_info in failed_files.items():
+        attempts = error_info.get('attempts', 1)
+        error_msg = error_info.get('error', '')
+        
+        # Check if we should retry this file
+        if attempts >= max_attempts:
+            continue
+            
+        # Apply error filter if specified
+        if filter_error and filter_error.lower() not in error_msg.lower():
+            continue
+            
+        retry_candidates.append({
+            'path': file_path,
+            'name': Path(file_path).name,
+            'attempts': attempts,
+            'error': error_msg
+        })
+    
+    if not retry_candidates:
+        console.print("[yellow]No files match retry criteria.[/yellow]")
+        return
+    
+    # Show what we'll retry
+    console.print(f"\n[bold]Found {len(retry_candidates)} files to retry[/bold]")
+    
+    retry_table = Table(box=box.ROUNDED)
+    retry_table.add_column("File", style="cyan")
+    retry_table.add_column("Previous Attempts", style="yellow")
+    retry_table.add_column("Error Type", style="red")
+    
+    for candidate in retry_candidates[:10]:
+        error_type = 'Timeout' if 'timeout' in candidate['error'].lower() else \
+                    'Memory' if 'memory' in candidate['error'].lower() else \
+                    'Java' if 'java' in candidate['error'].lower() else \
+                    'Other'
+        retry_table.add_row(
+            candidate['name'],
+            str(candidate['attempts']),
+            error_type
+        )
+    
+    console.print(retry_table)
+    
+    if len(retry_candidates) > 10:
+        console.print(f"\n[dim]... and {len(retry_candidates) - 10} more files[/dim]")
+    
+    if dry_run:
+        console.print("\n[yellow]Dry run mode - no files will be processed[/yellow]")
+        return
+    
+    # Confirm retry
+    if not click.confirm(f"\nRetry {len(retry_candidates)} failed files?"):
+        return
+    
+    # Load config
+    if config:
+        cfg = Config.from_file(config)
+    else:
+        cfg = Config()
+        # Try to use config from original session
+        if 'config' in state:
+            for key, value in state['config'].items():
+                setattr(cfg, key, value)
+    
+    # Get input directory from state
+    input_dir = state.get('input_dir')
+    if not input_dir or not Path(input_dir).exists():
+        console.print("[red]Original input directory not found in state or doesn't exist[/red]")
+        return
+    
+    # Create list of files to retry
+    retry_files = [candidate['path'] for candidate in retry_candidates]
+    
+    # Initialize batch runner with retry files
+    runner = BatchRunner(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        config=cfg,
+        retry_files=retry_files  # Only process these specific files
+    )
+    
+    console.print(f"\n[cyan]Starting retry with {delay}s delay between files...[/cyan]")
+    
+    # Run with retry logic
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console
+    ) as progress:
+        task = progress.add_task("Retrying failed files...", total=len(retry_files))
+        
+        for i, file_path in enumerate(retry_files):
+            try:
+                # Add delay between retries
+                if i > 0:
+                    time.sleep(delay)
+                
+                # Update progress
+                progress.update(task, description=f"Retrying {Path(file_path).name}...")
+                
+                # Process file
+                runner.process_single_file(file_path)
+                
+                # Update state to mark as completed
+                if file_path in failed_files:
+                    del failed_files[file_path]
+                    
+                progress.update(task, advance=1)
+                
+            except Exception as e:
+                # Update attempt count
+                if file_path not in failed_files:
+                    failed_files[file_path] = {}
+                    
+                failed_files[file_path]['attempts'] = failed_files[file_path].get('attempts', 1) + 1
+                failed_files[file_path]['error'] = str(e)
+                failed_files[file_path]['timestamp'] = datetime.now().isoformat()
+                
+                progress.update(task, advance=1)
+    
+    # Save updated state
+    state['failed_files'] = failed_files
+    state['last_updated'] = datetime.now().isoformat()
+    
+    with open(state_file, 'w') as f:
+        json.dump(state, f, indent=2)
+    
+    # Show final results
+    successful = len(retry_candidates) - len(failed_files)
+    console.print(f"\n[bold]Retry Results:[/bold]")
+    console.print(f"  [green]✓ Successfully processed: {successful}[/green]")
+    console.print(f"  [red]✗ Still failing: {len(failed_files)}[/red]")
+    
+    if failed_files:
+        console.print("\n[yellow]Some files still failing. Run again to retry or check logs for details.[/yellow]")

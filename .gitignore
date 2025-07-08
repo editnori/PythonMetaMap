@@ -31,6 +31,9 @@ verify_java_bridge.py
 generic_controller.log
 install.log
 *.log
+.mimic_pid
+.mimic_state.json
+*.nfs*
 
 # IDE files
 .idea/

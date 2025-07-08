@@ -15,6 +15,7 @@ from ..processing.batch_runner import BatchRunner
 from .commands import server_group, config_group, stats_group, monitor, retry, retry_failed
 from .interactive import interactive_mode
 from .analysis import analysis_group
+from .enhanced_analysis import enhanced_analysis_group
 
 console = Console()
 
@@ -299,6 +300,7 @@ cli.add_command(server_group, name='server')
 cli.add_command(config_group, name='config')
 cli.add_command(stats_group, name='stats')
 cli.add_command(analysis_group, name='analysis')
+cli.add_command(enhanced_analysis_group, name='enhanced-analysis')
 cli.add_command(monitor)
 cli.add_command(retry)
 cli.add_command(retry_failed)
