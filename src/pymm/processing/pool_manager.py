@@ -469,5 +469,5 @@ class WorkerPool:
         return stats
 
 
-# Alias for backward compatibility
-MetaMapInstancePool = WorkerPool
+# Import the actual MetaMapInstancePool
+from .instance_pool import MetaMapInstancePool

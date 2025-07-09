@@ -108,7 +108,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.4.4[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v8.6.8[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1895,6 +1895,12 @@ Throughput: {throughput:.2f} files/s"""
             default=self.config.get('use_instance_pool', True)
         )
         
+        # Ask about background processing
+        run_background = Confirm.ask(
+            "\nRun in background? (allows you to close terminal)",
+            default=False
+        )
+        
         # Get list of files to process (needed for auto-select)
         input_path = Path(input_dir)
         files = list(input_path.glob("*.txt")) + list(input_path.glob("*.TXT"))
@@ -1985,12 +1991,25 @@ Throughput: {throughput:.2f} files/s"""
             self.config.set('use_instance_pool', use_pool)
             
             try:
-                if mode == "1":
-                    self._run_processing_visual(input_dir, output_dir, files)
-                elif mode == "2":
-                    self._run_ultra_processing(input_dir, output_dir)
-                elif mode == "3":
-                    self._run_chunked_processing(input_dir, output_dir, chunk_size)
+                if run_background:
+                    # Run in background mode
+                    console.print("\n[yellow]Starting background processing...[/yellow]")
+                    
+                    # Create background processor
+                    bg_processor = BackgroundProcessor(output_dir)
+                    job_id = bg_processor.start_background_process(input_dir, output_dir)
+                    
+                    console.print(f"\n[green]✓ Background job started with ID: {job_id}[/green]")
+                    console.print("[cyan]Monitor progress with: pymm jobs list[/cyan]")
+                    console.print("[cyan]Or use the Background Jobs menu (option 8)[/cyan]")
+                else:
+                    # Run in foreground mode
+                    if mode == "1":
+                        self._run_processing_visual(input_dir, output_dir, files)
+                    elif mode == "2":
+                        self._run_ultra_processing(input_dir, output_dir)
+                    elif mode == "3":
+                        self._run_chunked_processing(input_dir, output_dir, chunk_size)
             finally:
                 # Restore config
                 self.config.set('max_parallel_workers', old_workers)
@@ -2494,37 +2513,322 @@ Output Directory: {output_path}"""
         """Perform clinical analysis"""
         console.print("\n[cyan]Performing clinical analysis...[/cyan]")
         
-        # This would integrate with the clinical analyzer
-        console.print("\n[bold]Clinical Analysis Features:[/bold]")
-        console.print("• Note type classification")
-        console.print("• Patient demographics extraction")
-        console.print("• Procedure identification")
-        console.print("• Diagnosis grouping")
-        console.print("• Temporal analysis")
+        # Create analyzer instance
+        analyzer = AnalysisTools(output_dir)
         
-        console.print("\n[yellow]Full clinical analysis requires additional setup[/yellow]")
+        # Select analysis preset
+        presets = {
+            "1": ("General Clinical", None),
+            "2": ("Kidney Stone Comprehensive", "kidney_stone_comprehensive"),
+            "3": ("Stone Procedures - Removal", "stone_procedures_removal"),
+            "4": ("Stone Procedures - Drainage", "stone_procedures_drainage"),
+            "5": ("Stone Characteristics", "stone_characteristics"),
+            "6": ("Treatment Outcomes", "stone_outcomes")
+        }
+        
+        console.print("\n[bold]Select Analysis Preset:[/bold]")
+        for key, (name, _) in presets.items():
+            console.print(f"[{key}] {name}")
+        
+        choice = console.input("\nSelect preset (1-6) [1]: ").strip() or "1"
+        preset_name, preset = presets.get(choice, presets["1"])
+        
+        console.print(f"\n[yellow]Running {preset_name} analysis...[/yellow]")
+        
+        with Progress() as progress:
+            task = progress.add_task("Analyzing clinical data...", total=None)
+            
+            # Run enhanced analysis
+            results = analyzer.clinical_analyzer.analyze_directory_enhanced(
+                filter_preset=preset,
+                export_validation=True
+            )
+            
+            progress.update(task, completed=100)
+        
+        # Display results summary
+        console.print("\n[bold green]Clinical Analysis Complete![/bold green]")
+        
+        # Note type distribution
+        if results.get('note_types'):
+            table = Table(title="Note Type Distribution", box=box.ROUNDED)
+            table.add_column("Note Type", style="cyan")
+            table.add_column("Count", style="yellow")
+            table.add_column("Percentage", style="green")
+            
+            total = sum(results['note_types'].values())
+            for note_type, count in sorted(results['note_types'].items(), 
+                                         key=lambda x: x[1], reverse=True):
+                percentage = (count / total * 100) if total > 0 else 0
+                table.add_row(note_type, str(count), f"{percentage:.1f}%")
+            
+            console.print("\n", table)
+        
+        # Demographics summary
+        if results.get('demographics'):
+            demo_table = Table(title="Patient Demographics", box=box.ROUNDED)
+            demo_table.add_column("Category", style="cyan")
+            demo_table.add_column("Value", style="yellow")
+            
+            # Age statistics
+            ages = results['demographics'].get('ages', [])
+            if ages:
+                demo_table.add_row("Patients with Age", str(len(ages)))
+                demo_table.add_row("Mean Age", f"{np.mean(ages):.1f} years")
+                demo_table.add_row("Age Range", f"{min(ages)}-{max(ages)} years")
+            
+            # Sex distribution
+            sex_dist = results['demographics'].get('sex_distribution', {})
+            for sex, count in sex_dist.items():
+                demo_table.add_row(f"{sex.capitalize()} Patients", str(count))
+            
+            console.print("\n", demo_table)
+        
+        # Procedure summary (if applicable)
+        if results.get('procedure_classifications'):
+            proc_table = Table(title="Procedure Classifications", box=box.ROUNDED)
+            proc_table.add_column("Category", style="cyan")
+            proc_table.add_column("Count", style="yellow")
+            
+            proc_counts = Counter(results['procedure_classifications'].values())
+            for category, count in proc_counts.most_common():
+                proc_table.add_row(category.capitalize(), str(count))
+            
+            console.print("\n", proc_table)
+        
+        # Stone phenotypes (if applicable)
+        if results.get('stone_phenotypes'):
+            pheno_table = Table(title="Stone Phenotype Summary", box=box.ROUNDED)
+            pheno_table.add_column("Feature", style="cyan")
+            pheno_table.add_column("Found", style="yellow")
+            
+            # Count non-null features
+            feature_counts = defaultdict(int)
+            for phenotype in results['stone_phenotypes'].values():
+                for feature, value in phenotype.items():
+                    if value is not None:
+                        feature_counts[feature] += 1
+            
+            for feature, count in sorted(feature_counts.items()):
+                pheno_table.add_row(feature.replace('_', ' ').title(), str(count))
+            
+            console.print("\n", pheno_table)
+        
+        # Generate visualizations
+        console.print("\n[yellow]Generating visualizations...[/yellow]")
+        
+        # Generate comparative charts
+        analyzer.clinical_analyzer.generate_comparative_visualizations(results)
+        
+        # Generate chord diagram for concept relationships
+        if results.get('cooccurrence_matrix'):
+            analyzer.clinical_analyzer.generate_chord_diagram(
+                results['cooccurrence_matrix'],
+                results.get('semantic_types', {})
+            )
+        
+        # Generate comprehensive HTML report
+        report_path = analyzer.clinical_analyzer.generate_comprehensive_html_report(results)
+        
+        console.print(f"\n[green]✓ Clinical analysis complete![/green]")
+        console.print(f"[green]✓ Report saved to: {report_path}[/green]")
+        console.print(f"[green]✓ Visualizations saved to: {output_dir / 'clinical_visualizations'}[/green]")
+        
+        # Validation set info
+        if results.get('validation_exported'):
+            console.print(f"[green]✓ Validation set exported to: {output_dir / 'validation_samples.xlsx'}[/green]")
         
     def _export_analysis_report(self, analyzer: AnalysisTools, output_dir: Path):
         """Export comprehensive analysis report"""
-        console.print("\n[cyan]Generating analysis report...[/cyan]")
+        console.print("\n[cyan]Generating comprehensive analysis report...[/cyan]")
         
+        # Gather all analysis data
+        with Progress() as progress:
+            task = progress.add_task("Collecting analysis data...", total=4)
+            
+            # Get concept frequency data
+            freq_table = analyzer.concept_frequency_analysis()
+            progress.update(task, advance=1)
+            
+            # Get semantic type analysis
+            semantic_data = analyzer.semantic_type_analysis()
+            progress.update(task, advance=1)
+            
+            # Get co-occurrence data
+            cooccurrence_data = analyzer.co_occurrence_analysis()
+            progress.update(task, advance=1)
+            
+            # Get clinical insights if available
+            clinical_insights = None
+            try:
+                clinical_insights = analyzer.clinical_analyzer.analyze_directory_enhanced(
+                    export_validation=False
+                )
+            except:
+                pass
+            progress.update(task, advance=1)
+        
+        # Create comprehensive report
         report_path = output_dir / f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
         
         with open(report_path, 'w') as f:
-            f.write("# PythonMetaMap Analysis Report\n\n")
-            f.write(f"Generated: {datetime.now()}\n\n")
+            # Header
+            f.write("# PythonMetaMap Comprehensive Analysis Report\n\n")
+            f.write(f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"**Output Directory:** {output_dir}\n")
+            f.write(f"**Files Analyzed:** {len(list(output_dir.glob('*.csv')))}\n\n")
             
-            # Add various analyses
-            f.write("## Concept Frequency Analysis\n\n")
-            # Would add frequency data
+            # Executive Summary
+            f.write("## Executive Summary\n\n")
+            total_concepts = sum(analyzer.analyzer.concept_freq.values())
+            unique_concepts = len(analyzer.analyzer.concept_freq)
+            total_types = len(analyzer.analyzer.semantic_types)
             
+            f.write(f"- **Total Concepts Extracted:** {total_concepts:,}\n")
+            f.write(f"- **Unique Concepts:** {unique_concepts:,}\n")
+            f.write(f"- **Semantic Types:** {total_types}\n")
+            f.write(f"- **Processing Coverage:** {analyzer.analyzer.files_processed} files\n\n")
+            
+            # Top Concepts
+            f.write("## Top 20 Most Frequent Concepts\n\n")
+            f.write("| Rank | Concept | CUI | Semantic Type | Frequency |\n")
+            f.write("|------|---------|-----|---------------|----------|\n")
+            
+            top_concepts = sorted(analyzer.analyzer.concept_freq.items(), 
+                                key=lambda x: x[1], reverse=True)[:20]
+            
+            for i, ((concept, cui), freq) in enumerate(top_concepts, 1):
+                sem_type = analyzer.analyzer.concept_details.get((concept, cui), {}).get('semantic_type', 'N/A')
+                f.write(f"| {i} | {concept} | {cui} | {sem_type} | {freq:,} |\n")
+            
+            f.write("\n")
+            
+            # Semantic Type Distribution
             f.write("## Semantic Type Distribution\n\n")
-            # Would add distribution data
+            f.write("| Semantic Type | Count | Percentage |\n")
+            f.write("|---------------|-------|------------|\n")
             
-            f.write("## Co-occurrence Patterns\n\n")
-            # Would add co-occurrence data
+            total_sem_types = sum(analyzer.analyzer.semantic_types.values())
+            for sem_type, count in sorted(analyzer.analyzer.semantic_types.items(), 
+                                         key=lambda x: x[1], reverse=True)[:15]:
+                percentage = (count / total_sem_types * 100) if total_sem_types > 0 else 0
+                f.write(f"| {sem_type} | {count:,} | {percentage:.1f}% |\n")
             
-        console.print(f"[green]Analysis report saved to: {report_path}[/green]")
+            f.write("\n")
+            
+            # Co-occurrence Patterns
+            if cooccurrence_data:
+                f.write("## Top Co-occurrence Patterns\n\n")
+                f.write("| Concept 1 | Concept 2 | Co-occurrence Count |\n")
+                f.write("|-----------|-----------|--------------------|\n")
+                
+                # Get top 15 co-occurrences
+                cooccurrence_list = []
+                for (c1, cui1), related in cooccurrence_data.items():
+                    for (c2, cui2), count in related.items():
+                        if (c1, cui1) < (c2, cui2):  # Avoid duplicates
+                            cooccurrence_list.append(((c1, c2), count))
+                
+                top_cooccurrences = sorted(cooccurrence_list, key=lambda x: x[1], reverse=True)[:15]
+                
+                for (c1, c2), count in top_cooccurrences:
+                    f.write(f"| {c1} | {c2} | {count} |\n")
+                
+                f.write("\n")
+            
+            # Clinical Insights (if available)
+            if clinical_insights:
+                f.write("## Clinical Analysis Summary\n\n")
+                
+                # Note types
+                if clinical_insights.get('note_types'):
+                    f.write("### Note Type Distribution\n\n")
+                    for note_type, count in sorted(clinical_insights['note_types'].items(), 
+                                                  key=lambda x: x[1], reverse=True):
+                        f.write(f"- **{note_type}:** {count} files\n")
+                    f.write("\n")
+                
+                # Demographics
+                if clinical_insights.get('demographics'):
+                    f.write("### Patient Demographics\n\n")
+                    ages = clinical_insights['demographics'].get('ages', [])
+                    if ages:
+                        f.write(f"- **Total Patients with Age Data:** {len(ages)}\n")
+                        f.write(f"- **Mean Age:** {np.mean(ages):.1f} years\n")
+                        f.write(f"- **Age Range:** {min(ages)}-{max(ages)} years\n")
+                    
+                    sex_dist = clinical_insights['demographics'].get('sex_distribution', {})
+                    if sex_dist:
+                        f.write("\n**Sex Distribution:**\n")
+                        for sex, count in sex_dist.items():
+                            f.write(f"- {sex.capitalize()}: {count}\n")
+                    f.write("\n")
+            
+            # Data Quality Metrics
+            f.write("## Data Quality Metrics\n\n")
+            
+            # Calculate coverage
+            total_files = len(list(output_dir.glob('*.csv')))
+            non_empty_files = analyzer.analyzer.files_processed
+            coverage = (non_empty_files / total_files * 100) if total_files > 0 else 0
+            
+            f.write(f"- **File Coverage:** {non_empty_files}/{total_files} ({coverage:.1f}%)\n")
+            f.write(f"- **Average Concepts per File:** {total_concepts/non_empty_files if non_empty_files > 0 else 0:.1f}\n")
+            f.write(f"- **Concept Diversity Index:** {unique_concepts/total_concepts if total_concepts > 0 else 0:.3f}\n\n")
+            
+            # Methodology
+            f.write("## Methodology\n\n")
+            f.write("This report was generated using PythonMetaMap's comprehensive analysis tools:\n\n")
+            f.write("1. **Concept Extraction:** MetaMap NLP processing of clinical text\n")
+            f.write("2. **Frequency Analysis:** Statistical analysis of concept occurrence\n")
+            f.write("3. **Semantic Grouping:** UMLS semantic type categorization\n")
+            f.write("4. **Co-occurrence Analysis:** Identification of related concepts\n")
+            if clinical_insights:
+                f.write("5. **Clinical Analysis:** Enhanced clinical feature extraction\n")
+            f.write("\n")
+            
+            # Footer
+            f.write("---\n")
+            f.write("*Report generated by PythonMetaMap - Advanced Medical Concept Analysis*\n")
+        
+        # Also generate an Excel version with multiple sheets
+        excel_path = output_dir / f"analysis_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
+            # Concept frequency sheet
+            freq_df = pd.DataFrame([
+                {
+                    'Concept': concept,
+                    'CUI': cui,
+                    'Semantic Type': analyzer.analyzer.concept_details.get((concept, cui), {}).get('semantic_type', 'N/A'),
+                    'Frequency': freq
+                }
+                for (concept, cui), freq in sorted(analyzer.analyzer.concept_freq.items(), 
+                                                 key=lambda x: x[1], reverse=True)
+            ])
+            freq_df.to_excel(writer, sheet_name='Concept Frequency', index=False)
+            
+            # Semantic types sheet
+            sem_df = pd.DataFrame([
+                {'Semantic Type': sem_type, 'Count': count}
+                for sem_type, count in sorted(analyzer.analyzer.semantic_types.items(), 
+                                             key=lambda x: x[1], reverse=True)
+            ])
+            sem_df.to_excel(writer, sheet_name='Semantic Types', index=False)
+            
+            # Summary sheet
+            summary_data = {
+                'Metric': ['Total Concepts', 'Unique Concepts', 'Semantic Types', 
+                          'Files Processed', 'File Coverage %'],
+                'Value': [total_concepts, unique_concepts, total_types, 
+                         non_empty_files, f"{coverage:.1f}%"]
+            }
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_excel(writer, sheet_name='Summary', index=False)
+        
+        console.print(f"\n[green]✓ Analysis report saved to:[/green]")
+        console.print(f"  [cyan]Markdown:[/cyan] {report_path}")
+        console.print(f"  [cyan]Excel:[/cyan] {excel_path}")
         
     def configuration(self):
         """Configuration management"""
@@ -2655,10 +2959,10 @@ Output Directory: {output_path}"""
         summary.add_column("Component", style="cyan")
         summary.add_column("Status", style="green")
         
-        summary.add_row("Java", "Found" if results.get("Detecting Java installation") else "Not found")
-        summary.add_row("MetaMap", "Found" if results.get("Locating MetaMap") else "Not found")
-        summary.add_row("Directories", "Configured" if results.get("Finding data directories") else "Default")
-        summary.add_row("Resources", "Optimized")
+        summary.add_row("Java", results.get("java", "Not found"))
+        summary.add_row("MetaMap", results.get("metamap", "Not found"))
+        summary.add_row("Directories", results.get("directories", "Default"))
+        summary.add_row("Resources", results.get("resources", "Default"))
         
         console.print(summary)
         
@@ -3142,7 +3446,57 @@ Output Directory: {output_path}"""
             if log_dir.exists():
                 console.print("\n[dim]Checking logs for failed files...[/dim]")
                 
-                # Would analyze logs for failures
+                # Analyze logs for failures
+                failed_files = []
+                log_files = sorted(log_dir.glob("batch_run_*.log"), reverse=True)[:5]  # Check last 5 runs
+                
+                for log_file in log_files:
+                    try:
+                        with open(log_file, 'r') as f:
+                            content = f.read()
+                            # Look for error patterns
+                            for line in content.splitlines():
+                                if "ERROR" in line and ".txt" in line:
+                                    # Extract filename from error message
+                                    import re
+                                    match = re.search(r'(\w+\.txt)', line)
+                                    if match:
+                                        failed_files.append(match.group(1))
+                                elif "Failed to process" in line:
+                                    match = re.search(r'Failed to process (\S+\.txt)', line)
+                                    if match:
+                                        failed_files.append(match.group(1))
+                    except:
+                        continue
+                
+                if failed_files:
+                    failed_files = list(set(failed_files))  # Remove duplicates
+                    console.print(f"\n[yellow]Found {len(failed_files)} failed files in recent logs[/yellow]")
+                    
+                    # Show failed files
+                    failed_table = Table(title="Failed Files", box=box.ROUNDED)
+                    failed_table.add_column("Filename", style="red")
+                    
+                    for file in failed_files[:10]:  # Show first 10
+                        failed_table.add_row(file)
+                    
+                    if len(failed_files) > 10:
+                        failed_table.add_row(f"... and {len(failed_files) - 10} more")
+                    
+                    console.print(failed_table)
+                    
+                    # Ask if they want to retry these files
+                    if Confirm.ask("\nRetry these failed files?", default=True):
+                        # Create a retry list file
+                        retry_file = output_dir / "retry_files.txt"
+                        with open(retry_file, 'w') as f:
+                            for file in failed_files:
+                                f.write(f"{file}\n")
+                        
+                        console.print(f"\n[green]Created retry file list: {retry_file}[/green]")
+                        console.print("[cyan]Use this with batch processing to retry only failed files[/cyan]")
+                else:
+                    console.print("[green]No failed files found in recent logs[/green]")
                 
             input("\nPress Enter to continue...")
             return

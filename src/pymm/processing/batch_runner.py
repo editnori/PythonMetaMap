@@ -183,7 +183,7 @@ class BatchRunner:
         finally:
             # Return instance to pool
             if instance_id is not None:
-                self.instance_pool.release_instance(instance_id)
+                self.instance_pool.release_instance(instance_id, mm_instance if 'mm_instance' in locals() else None)
     
     def _process_file_direct(self, file: Path) -> Tuple[bool, float, Optional[str]]:
         """Process file without instance pool"""

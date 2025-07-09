@@ -235,7 +235,7 @@ class ChunkedBatchRunner:
         finally:
             # Always return instance to pool
             if instance_id is not None and self.instance_pool:
-                self.instance_pool.release_instance(instance_id)
+                self.instance_pool.release_instance(instance_id, mm_instance if 'mm_instance' in locals() else None)
     
     def run(self) -> Dict[str, Any]:
         """Run chunked batch processing"""
