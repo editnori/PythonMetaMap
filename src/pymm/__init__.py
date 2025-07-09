@@ -78,7 +78,7 @@ __all__ = [
 ]
 
 # Version information
-__version__ = '8.2.0'
+__version__ = '8.2.1'
 __author__ = 'Dr.Layth Qassem'
 __email__ = ''
 

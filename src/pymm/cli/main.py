@@ -13,7 +13,7 @@ from ..core.config import PyMMConfig
 from ..server.manager import ServerManager
 from ..processing.batch_runner import BatchRunner
 from .commands import server_group, config_group, stats_group, monitor, retry, retry_failed, chunked_process_cmd
-from .interactive_ultimate import interactive_ultimate as interactive_mode
+from .interactive import interactive_ultimate as interactive_mode
 from .analysis import analysis_group
 from .enhanced_analysis import enhanced_analysis_group
 
@@ -27,11 +27,11 @@ ASCII_BANNER = r"""[bold cyan]
  |  __/| |_| | |  | || |  | |
  |_|    \__, |_|  |_||_|  |_|
         |___/                 [/bold cyan]
-[dim]Python MetaMap Orchestrator v8.2.0[/dim]
+[dim]Python MetaMap Orchestrator v8.2.1[/dim]
 """
 
 @click.group(invoke_without_command=True)
-@click.version_option(version='8.2.0', prog_name='pymm')
+@click.version_option(version='8.2.1', prog_name='pymm')
 @click.option('--interactive', '-i', is_flag=True, help='Launch interactive mode')
 @click.pass_context
 def cli(ctx, interactive):
