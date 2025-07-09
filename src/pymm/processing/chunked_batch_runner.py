@@ -141,11 +141,7 @@ class ChunkedBatchRunner:
                     )
                     
                     logger.info(f"Creating instance pool with {max_instances} instances")
-                    self.instance_pool = MetaMapInstancePool(
-                        self.config.get("metamap_binary_path"),
-                        max_instances=max_instances,
-                        config=self.config
-                    )
+                    self.instance_pool = MetaMapInstancePool(self.config)
     
     def _process_chunk(self, files: List[Path]) -> Dict[str, Any]:
         """Process a chunk of files"""

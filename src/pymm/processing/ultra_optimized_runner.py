@@ -217,11 +217,7 @@ class UltraOptimizedBatchRunner:
                     )
                     
                     logger.info(f"Creating pool with {max_instances} instances")
-                    self.instance_pool = MetaMapInstancePool(
-                        self.config.get("metamap_binary_path"),
-                        max_instances=max_instances,
-                        config=self.config
-                    )
+                    self.instance_pool = MetaMapInstancePool(self.config)
     
     def _process_file_advanced(self, file: Path) -> Tuple[bool, float, Optional[str]]:
         """Process file with advanced error handling and monitoring"""

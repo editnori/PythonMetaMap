@@ -138,11 +138,7 @@ class OptimizedBatchRunner:
                     )
                     
                     logger.info(f"Creating pool with {max_instances} instances")
-                    self.instance_pool = MetaMapInstancePool(
-                        self.config.get("metamap_binary_path"),
-                        max_instances=max_instances,
-                        config=self.config
-                    )
+                    self.instance_pool = MetaMapInstancePool(self.config)
     
     def _process_file(self, file: Path) -> Tuple[bool, float, Optional[str]]:
         """Process a single file with resource management"""

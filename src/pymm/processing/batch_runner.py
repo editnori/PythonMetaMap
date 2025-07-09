@@ -75,10 +75,7 @@ class BatchRunner:
         # Instance pool
         self.instance_pool = None
         if self.use_instance_pool:
-            self.instance_pool = MetaMapInstancePool(
-                config.get("metamap_binary_path"),
-                max_instances=config.get("max_instances", 4)
-            )
+            self.instance_pool = MetaMapInstancePool(config)
         
         # Progress tracking
         self.progress_queue = Queue()
