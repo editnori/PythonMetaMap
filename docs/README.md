@@ -1,6 +1,6 @@
 # PythonMetaMap Documentation
 
-## Version 8.3.8
+## Version 8.4.3
 
 Welcome to the PythonMetaMap documentation! This guide provides comprehensive information about using PythonMetaMap for medical text processing.
 
@@ -20,7 +20,7 @@ Welcome to the PythonMetaMap documentation! This guide provides comprehensive in
 - [Download Instructions](DOWNLOAD_INSTRUCTIONS.md) - MetaMap binary download guide
 - [Improvements Summary](IMPROVEMENTS_SUMMARY.md) - Recent enhancements and optimizations
 
-## What's New in v8.3.8
+## What's New in v8.4.3
 
 ### PyMM CLI Interface
 - Beautiful new banner with filled ASCII art

@@ -1745,31 +1745,20 @@ Throughput: {throughput:.2f} files/s"""
             
             runner = UltraOptimizedBatchRunner(input_dir, output_dir, self.config)
             
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeRemainingColumn(),
-                console=console
-            ) as progress:
-                task = progress.add_task("Processing files...", total=None)
-                
-                def update_callback(processed, total, current_file):
-                    progress.update(task, completed=processed, total=total, 
-                                  description=f"Processing: {current_file}")
-                
-                results = runner.run(progress_callback=update_callback)
+            # UltraOptimizedBatchRunner has its own progress display and doesn't support callbacks
+            results = runner.run()
                 
             console.print(f"\n[green]✓ Ultra processing complete![/green]")
             console.print(f"Processed: {results.get('processed', 0)} files")
             console.print(f"Failed: {results.get('failed', 0)} files")
             
         except ImportError:
-            console.print("[yellow]Ultra optimizer not available, using standard processing[/yellow]")
-            self._run_standard_processing(input_dir, output_dir)
+            console.print("[yellow]Ultra optimizer not available, using optimized processing[/yellow]")
+            self._run_optimized_processing_fallback(input_dir, output_dir, 100)
         except Exception as e:
             console.print(f"[red]Ultra processing error: {e}[/red]")
+            console.print("[yellow]Falling back to optimized processing[/yellow]")
+            self._run_optimized_processing_fallback(input_dir, output_dir, 100)
             
     def _run_chunked_processing(self, input_dir: str, output_dir: str, chunk_size: int):
         """Run memory-efficient chunked processing"""
@@ -1784,22 +1773,8 @@ Throughput: {throughput:.2f} files/s"""
             
             runner = ChunkedBatchRunner(input_dir, output_dir, self.config)
             
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeRemainingColumn(),
-                MofNCompleteColumn(),
-                console=console
-            ) as progress:
-                task = progress.add_task("Processing chunks...", total=None)
-                
-                def update_callback(chunk_num, total_chunks, files_in_chunk):
-                    progress.update(task, completed=chunk_num, total=total_chunks,
-                                  description=f"Chunk {chunk_num}/{total_chunks} ({files_in_chunk} files)")
-                
-                results = runner.run(progress_callback=update_callback)
+            # ChunkedBatchRunner doesn't support progress callbacks, so just run it
+            results = runner.run()
                 
             # Restore original chunk size
             self.config.set('chunk_size', old_chunk_size)
@@ -1826,21 +1801,13 @@ Throughput: {throughput:.2f} files/s"""
         try:
             from ..processing.optimized_batch_runner import OptimizedBatchRunner
             
-            console.print(f"\n[bold cyan]Starting Optimized Processing (batch size: {chunk_size})...[/bold cyan]")
+            console.print(f"\n[bold cyan]Starting Optimized Processing...[/bold cyan]")
             
+            # OptimizedBatchRunner manages its own chunk size dynamically
             runner = OptimizedBatchRunner(input_dir, output_dir, self.config)
             
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeRemainingColumn(),
-                console=console
-            ) as progress:
-                task = progress.add_task("Processing files...", total=None)
-                
-                results = runner.run()
+            # Just run it - it has its own progress display
+            results = runner.run()
                 
             console.print(f"\n[green]✓ Optimized processing complete![/green]")
             console.print(f"Processed: {results.get('processed', 0)} files")
@@ -1855,27 +1822,24 @@ Throughput: {throughput:.2f} files/s"""
             
     def _run_standard_processing(self, input_dir: str, output_dir: str):
         """Fallback to standard processing"""
-        from ..processing.batch_runner import BatchRunner
-        
-        console.print("\n[bold cyan]Starting Standard Processing...[/bold cyan]")
-        
-        runner = BatchRunner(input_dir, output_dir, self.config)
-        
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(),
-            console=console
-        ) as progress:
-            task = progress.add_task("Processing files...", total=None)
+        try:
+            from ..processing.batch_runner import BatchRunner
             
+            console.print("\n[bold cyan]Starting Standard Processing...[/bold cyan]")
+            
+            runner = BatchRunner(input_dir, output_dir, self.config)
+            
+            # BatchRunner has its own progress display
             results = runner.run()
             
-        console.print(f"\n[green]✓ Standard processing complete![/green]")
-        console.print(f"Processed: {results.get('processed', 0)} files")
-        console.print(f"Failed: {results.get('failed', 0)} files")
+            console.print(f"\n[green]✓ Standard processing complete![/green]")
+            console.print(f"Processed: {results.get('processed', 0)} files")
+            console.print(f"Failed: {results.get('failed', 0)} files")
+            
+        except Exception as e:
+            console.print(f"\n[red]Standard processing error: {e}[/red]")
+            console.print("[red]All processing methods failed. Please check your configuration.[/red]")
+            input("\nPress Enter to continue...")
                     
     def batch_process(self):
         """Advanced batch processing with full control"""

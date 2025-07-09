@@ -27,11 +27,11 @@ ASCII_BANNER = r"""[bold cyan]
  |  __/| |_| | |  | || |  | |
  |_|    \__, |_|  |_||_|  |_|
         |___/                 [/bold cyan]
-[dim]Python MetaMap Orchestrator v8.4.2[/dim]
+[dim]Python MetaMap Orchestrator v8.4.3[/dim]
 """
 
 @click.group(invoke_without_command=True)
-@click.version_option(version='8.4.2', prog_name='pymm')
+@click.version_option(version='8.4.3', prog_name='pymm')
 @click.option('--interactive', '-i', is_flag=True, help='Launch interactive mode')
 @click.pass_context
 def cli(ctx, interactive):
