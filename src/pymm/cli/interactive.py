@@ -108,7 +108,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.4.0[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v8.4.1[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1778,7 +1778,13 @@ Throughput: {throughput:.2f} files/s"""
             
             console.print(f"\n[bold cyan]Starting Chunked Processing (chunks of {chunk_size})...[/bold cyan]")
             
-            runner = ChunkedBatchRunner(input_dir, output_dir, self.config, chunk_size=chunk_size)
+            runner = ChunkedBatchRunner(input_dir, output_dir, self.config)
+            
+            # Try to set chunk size if the runner supports it
+            if hasattr(runner, 'chunk_size'):
+                runner.chunk_size = chunk_size
+            elif hasattr(runner, 'set_chunk_size'):
+                runner.set_chunk_size(chunk_size)
             
             with Progress(
                 SpinnerColumn(),
@@ -1803,10 +1809,44 @@ Throughput: {throughput:.2f} files/s"""
             console.print(f"Chunks: {results.get('chunks', 0)}")
             
         except ImportError:
-            console.print("[yellow]Chunked processor not available, using standard processing[/yellow]")
-            self._run_standard_processing(input_dir, output_dir)
+            console.print("[yellow]Chunked processor not available, using optimized processing[/yellow]")
+            self._run_optimized_processing_fallback(input_dir, output_dir, chunk_size)
         except Exception as e:
             console.print(f"[red]Chunked processing error: {e}[/red]")
+            console.print("[yellow]Falling back to optimized processing[/yellow]")
+            self._run_optimized_processing_fallback(input_dir, output_dir, chunk_size)
+            
+    def _run_optimized_processing_fallback(self, input_dir: str, output_dir: str, chunk_size: int):
+        """Fallback chunked processing using OptimizedBatchRunner"""
+        try:
+            from ..processing.optimized_batch_runner import OptimizedBatchRunner
+            
+            console.print(f"\n[bold cyan]Starting Optimized Processing (batch size: {chunk_size})...[/bold cyan]")
+            
+            runner = OptimizedBatchRunner(input_dir, output_dir, self.config)
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("Processing files...", total=None)
+                
+                results = runner.run()
+                
+            console.print(f"\n[green]✓ Optimized processing complete![/green]")
+            console.print(f"Processed: {results.get('processed', 0)} files")
+            console.print(f"Failed: {results.get('failed', 0)} files")
+            
+        except ImportError:
+            console.print("[yellow]Optimized processor not available, using standard processing[/yellow]")
+            self._run_standard_processing(input_dir, output_dir)
+        except Exception as e:
+            console.print(f"[red]Optimized processing error: {e}[/red]")
+            self._run_standard_processing(input_dir, output_dir)
             
     def _run_standard_processing(self, input_dir: str, output_dir: str):
         """Fallback to standard processing"""
@@ -2658,6 +2698,7 @@ Output Directory: {output_path}"""
     def _detect_java(self) -> str:
         """Detect Java installation"""
         import subprocess
+        import os
         
         # Common Java paths
         java_paths = [
@@ -2678,7 +2719,6 @@ Output Directory: {output_path}"""
             if result.returncode == 0:
                 java_bin = result.stdout.strip()
                 # Follow symlinks and find JAVA_HOME
-                import os
                 real_java = os.path.realpath(java_bin)
                 # Go up directories to find JAVA_HOME
                 java_home = Path(real_java).parent.parent
@@ -2690,6 +2730,8 @@ Output Directory: {output_path}"""
         
     def _detect_metamap(self) -> Dict[str, str]:
         """Detect MetaMap installation"""
+        import os
+        
         # Common MetaMap paths
         metamap_paths = [
             '/opt/public_mm',
