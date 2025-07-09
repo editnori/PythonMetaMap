@@ -108,7 +108,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.4.1[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v8.4.2[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1778,13 +1778,11 @@ Throughput: {throughput:.2f} files/s"""
             
             console.print(f"\n[bold cyan]Starting Chunked Processing (chunks of {chunk_size})...[/bold cyan]")
             
-            runner = ChunkedBatchRunner(input_dir, output_dir, self.config)
+            # Set chunk size in config before creating runner
+            old_chunk_size = self.config.get('chunk_size', 500)
+            self.config.set('chunk_size', chunk_size)
             
-            # Try to set chunk size if the runner supports it
-            if hasattr(runner, 'chunk_size'):
-                runner.chunk_size = chunk_size
-            elif hasattr(runner, 'set_chunk_size'):
-                runner.set_chunk_size(chunk_size)
+            runner = ChunkedBatchRunner(input_dir, output_dir, self.config)
             
             with Progress(
                 SpinnerColumn(),
@@ -1803,6 +1801,9 @@ Throughput: {throughput:.2f} files/s"""
                 
                 results = runner.run(progress_callback=update_callback)
                 
+            # Restore original chunk size
+            self.config.set('chunk_size', old_chunk_size)
+                
             console.print(f"\n[green]✓ Chunked processing complete![/green]")
             console.print(f"Processed: {results.get('processed', 0)} files")
             console.print(f"Failed: {results.get('failed', 0)} files")
@@ -1815,6 +1816,10 @@ Throughput: {throughput:.2f} files/s"""
             console.print(f"[red]Chunked processing error: {e}[/red]")
             console.print("[yellow]Falling back to optimized processing[/yellow]")
             self._run_optimized_processing_fallback(input_dir, output_dir, chunk_size)
+        finally:
+            # Always restore original chunk size
+            if 'old_chunk_size' in locals():
+                self.config.set('chunk_size', old_chunk_size)
             
     def _run_optimized_processing_fallback(self, input_dir: str, output_dir: str, chunk_size: int):
         """Fallback chunked processing using OptimizedBatchRunner"""
@@ -2697,9 +2702,6 @@ Output Directory: {output_path}"""
         
     def _detect_java(self) -> str:
         """Detect Java installation"""
-        import subprocess
-        import os
-        
         # Common Java paths
         java_paths = [
             '/usr/lib/jvm/java-11-openjdk-amd64',
@@ -2730,8 +2732,6 @@ Output Directory: {output_path}"""
         
     def _detect_metamap(self) -> Dict[str, str]:
         """Detect MetaMap installation"""
-        import os
-        
         # Common MetaMap paths
         metamap_paths = [
             '/opt/public_mm',
