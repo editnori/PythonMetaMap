@@ -108,7 +108,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.3.8[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v8.3.9[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1790,6 +1790,15 @@ Throughput: {throughput:.2f} files/s"""
             default=self.config.get('use_instance_pool', True)
         )
         
+        # Get list of files to process (needed for auto-select)
+        input_path = Path(input_dir)
+        files = list(input_path.glob("*.txt")) + list(input_path.glob("*.TXT"))
+        
+        if not files:
+            console.print("[yellow]No text files found in input directory[/yellow]")
+            input("\nPress Enter to continue...")
+            return
+        
         # Processing options with descriptions
         console.print("\n[bold]Processing Mode Selection[/bold]")
         console.print(Panel(
@@ -1871,15 +1880,6 @@ Throughput: {throughput:.2f} files/s"""
             self.config.set('use_instance_pool', use_pool)
             
             try:
-                # Get list of files to process
-                input_path = Path(input_dir)
-                files = list(input_path.glob("*.txt")) + list(input_path.glob("*.TXT"))
-                
-                if not files:
-                    console.print("[yellow]No text files found in input directory[/yellow]")
-                    input("\nPress Enter to continue...")
-                    return
-                
                 if mode == "1":
                     self._run_processing_visual(input_dir, output_dir, files)
                 elif mode == "2":
