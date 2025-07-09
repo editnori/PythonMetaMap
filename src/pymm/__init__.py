@@ -78,7 +78,7 @@ __all__ = [
 ]
 
 # Version information
-__version__ = '8.3.9'
+__version__ = '8.4.0'
 __author__ = 'Dr. Layth Qassem, PharmD, MS'
 __email__ = 'layth.qassem@vanderbilt.edu, layth888.qassem@vumc.org'
 

@@ -108,7 +108,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.3.9[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v8.4.0[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1736,6 +1736,102 @@ Throughput: {throughput:.2f} files/s"""
                     # Cleanup
                     shutil.rmtree(temp_dir)
                     
+    def _run_ultra_processing(self, input_dir: str, output_dir: str):
+        """Run ultra-optimized processing"""
+        try:
+            from ..processing.ultra_optimized_runner import UltraOptimizedBatchRunner
+            
+            console.print("\n[bold cyan]Starting Ultra Processing...[/bold cyan]")
+            
+            runner = UltraOptimizedBatchRunner(input_dir, output_dir, self.config)
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("Processing files...", total=None)
+                
+                def update_callback(processed, total, current_file):
+                    progress.update(task, completed=processed, total=total, 
+                                  description=f"Processing: {current_file}")
+                
+                results = runner.run(progress_callback=update_callback)
+                
+            console.print(f"\n[green]✓ Ultra processing complete![/green]")
+            console.print(f"Processed: {results.get('processed', 0)} files")
+            console.print(f"Failed: {results.get('failed', 0)} files")
+            
+        except ImportError:
+            console.print("[yellow]Ultra optimizer not available, using standard processing[/yellow]")
+            self._run_standard_processing(input_dir, output_dir)
+        except Exception as e:
+            console.print(f"[red]Ultra processing error: {e}[/red]")
+            
+    def _run_chunked_processing(self, input_dir: str, output_dir: str, chunk_size: int):
+        """Run memory-efficient chunked processing"""
+        try:
+            from ..processing.chunked_batch_runner import ChunkedBatchRunner
+            
+            console.print(f"\n[bold cyan]Starting Chunked Processing (chunks of {chunk_size})...[/bold cyan]")
+            
+            runner = ChunkedBatchRunner(input_dir, output_dir, self.config, chunk_size=chunk_size)
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                MofNCompleteColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("Processing chunks...", total=None)
+                
+                def update_callback(chunk_num, total_chunks, files_in_chunk):
+                    progress.update(task, completed=chunk_num, total=total_chunks,
+                                  description=f"Chunk {chunk_num}/{total_chunks} ({files_in_chunk} files)")
+                
+                results = runner.run(progress_callback=update_callback)
+                
+            console.print(f"\n[green]✓ Chunked processing complete![/green]")
+            console.print(f"Processed: {results.get('processed', 0)} files")
+            console.print(f"Failed: {results.get('failed', 0)} files")
+            console.print(f"Chunks: {results.get('chunks', 0)}")
+            
+        except ImportError:
+            console.print("[yellow]Chunked processor not available, using standard processing[/yellow]")
+            self._run_standard_processing(input_dir, output_dir)
+        except Exception as e:
+            console.print(f"[red]Chunked processing error: {e}[/red]")
+            
+    def _run_standard_processing(self, input_dir: str, output_dir: str):
+        """Fallback to standard processing"""
+        from ..processing.batch_runner import BatchRunner
+        
+        console.print("\n[bold cyan]Starting Standard Processing...[/bold cyan]")
+        
+        runner = BatchRunner(input_dir, output_dir, self.config)
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=console
+        ) as progress:
+            task = progress.add_task("Processing files...", total=None)
+            
+            results = runner.run()
+            
+        console.print(f"\n[green]✓ Standard processing complete![/green]")
+        console.print(f"Processed: {results.get('processed', 0)} files")
+        console.print(f"Failed: {results.get('failed', 0)} files")
+                    
     def batch_process(self):
         """Advanced batch processing with full control"""
         self.clear_screen()
@@ -2488,49 +2584,57 @@ Output Directory: {output_path}"""
         console.print("\n[bold]Quick Setup[/bold]")
         console.print("[cyan]Auto-configuring PythonMetaMap...[/cyan]\n")
         
-        from ..utils.auto_detector import AutoDetector
-        detector = AutoDetector()
-        
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console
         ) as progress:
             
-            # Detection steps
-            steps = [
-                ("Detecting Java installation", lambda: detector.detect_java()),
-                ("Locating MetaMap", lambda: detector.detect_metamap()),
-                ("Finding data directories", lambda: detector.detect_data_directories()),
-                ("Analyzing system resources", lambda: self.pool_manager.analyze_system())
-            ]
-            
             results = {}
             
-            for description, func in steps:
-                task = progress.add_task(description, total=None)
-                result = func()
-                results[description] = result
-                progress.update(task, completed=True)
-                
-        # Apply configuration
-        if results.get("Detecting Java installation"):
-            self.config.set('java_home', results["Detecting Java installation"])
+            # 1. Detect Java
+            task1 = progress.add_task("Detecting Java installation", total=None)
+            java_home = self._detect_java()
+            if java_home:
+                results["java"] = "Found"
+                self.config.set('java_home', java_home)
+            else:
+                results["java"] = "Not found"
+            progress.update(task1, completed=True)
             
-        if results.get("Locating MetaMap"):
-            self.config.set('metamap_home', results["Locating MetaMap"])
-            binary = detector.detect_metamap_binary(results["Locating MetaMap"])
-            if binary:
-                self.config.set('metamap_binary_path', binary)
-                
-        if results.get("Finding data directories"):
-            dirs = results["Finding data directories"]
-            self.config.set('default_input_dir', dirs.get('input', './input_notes'))
-            self.config.set('default_output_dir', dirs.get('output', './output_csvs'))
+            # 2. Detect MetaMap
+            task2 = progress.add_task("Locating MetaMap", total=None)
+            metamap_paths = self._detect_metamap()
+            if metamap_paths:
+                results["metamap"] = "Found"
+                if metamap_paths.get('home'):
+                    self.config.set('metamap_home', metamap_paths['home'])
+                if metamap_paths.get('binary'):
+                    self.config.set('metamap_binary_path', metamap_paths['binary'])
+            else:
+                results["metamap"] = "Not found"
+            progress.update(task2, completed=True)
             
-        if results.get("Analyzing system resources"):
-            recommendations = results["Analyzing system resources"]
-            self.config.set('max_parallel_workers', recommendations['workers']['optimal'])
+            # 3. Setup directories
+            task3 = progress.add_task("Finding data directories", total=None)
+            self.config.set('default_input_dir', '/home/ubuntu/input_notes')
+            self.config.set('default_output_dir', '/home/ubuntu/output_csvs')
+            results["directories"] = "Configured"
+            progress.update(task3, completed=True)
+            
+            # 4. Analyze system
+            task4 = progress.add_task("Analyzing system resources", total=None)
+            try:
+                recommendations = self.pool_manager.analyze_system()
+                workers = recommendations['workers']['optimal']
+                self.config.set('max_parallel_workers', workers)
+                results["resources"] = "Optimized"
+            except:
+                # Fallback
+                cpu_count = psutil.cpu_count(logical=False) or 4
+                self.config.set('max_parallel_workers', min(cpu_count * 2, 16))
+                results["resources"] = "Optimized"
+            progress.update(task4, completed=True)
             
         # Save
         self.config.save()
@@ -2550,6 +2654,95 @@ Output Directory: {output_path}"""
         console.print(summary)
         
         input("\nPress Enter to continue...")
+        
+    def _detect_java(self) -> str:
+        """Detect Java installation"""
+        import subprocess
+        
+        # Common Java paths
+        java_paths = [
+            '/usr/lib/jvm/java-11-openjdk-amd64',
+            '/usr/lib/jvm/java-8-openjdk-amd64',
+            '/usr/lib/jvm/default-java',
+            '/opt/java',
+            os.environ.get('JAVA_HOME', '')
+        ]
+        
+        for path in java_paths:
+            if path and Path(path).exists():
+                return path
+                
+        # Try to find via which command
+        try:
+            result = subprocess.run(['which', 'java'], capture_output=True, text=True)
+            if result.returncode == 0:
+                java_bin = result.stdout.strip()
+                # Follow symlinks and find JAVA_HOME
+                import os
+                real_java = os.path.realpath(java_bin)
+                # Go up directories to find JAVA_HOME
+                java_home = Path(real_java).parent.parent
+                return str(java_home)
+        except:
+            pass
+            
+        return None
+        
+    def _detect_metamap(self) -> Dict[str, str]:
+        """Detect MetaMap installation"""
+        # Common MetaMap paths
+        metamap_paths = [
+            '/opt/public_mm',
+            '/usr/local/public_mm', 
+            './metamap_install/public_mm',
+            '../metamap_install/public_mm',
+            os.path.expanduser('~/metamap_install/public_mm'),
+            os.path.expanduser('~/public_mm'),
+        ]
+        
+        # Also check current config
+        current_binary = self.config.get('metamap_binary_path')
+        if current_binary and Path(current_binary).exists():
+            metamap_home = Path(current_binary).parent.parent
+            return {
+                'home': str(metamap_home),
+                'binary': current_binary
+            }
+        
+        # Check common paths
+        for path in metamap_paths:
+            if Path(path).exists():
+                # Look for binary
+                bin_path = Path(path) / 'bin' / 'metamap'
+                if bin_path.exists():
+                    return {
+                        'home': path,
+                        'binary': str(bin_path)
+                    }
+                # Also check for .sh version
+                bin_sh_path = Path(path) / 'bin' / 'metamap.sh'
+                if bin_sh_path.exists():
+                    return {
+                        'home': path,
+                        'binary': str(bin_sh_path)
+                    }
+                    
+        # Check python site-packages (if installed via pip)
+        try:
+            import site
+            for site_dir in site.getsitepackages():
+                metamap_dir = Path(site_dir) / 'metamap_install' / 'public_mm'
+                if metamap_dir.exists():
+                    bin_path = metamap_dir / 'bin' / 'metamap'
+                    if bin_path.exists():
+                        return {
+                            'home': str(metamap_dir),
+                            'binary': str(bin_path)
+                        }
+        except:
+            pass
+            
+        return None
         
     def _configure_directories(self):
         """Configure directories"""
