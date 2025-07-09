@@ -108,7 +108,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.2.8[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v8.3.8[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1790,13 +1790,74 @@ Throughput: {throughput:.2f} files/s"""
             default=self.config.get('use_instance_pool', True)
         )
         
-        # Processing options
-        console.print("\n[bold]Processing Mode[/bold]")
-        console.print("[1] Standard (OptimizedBatchRunner)")
-        console.print("[2] Ultra (UltraOptimizedBatchRunner)")
-        console.print("[3] Memory-efficient (Chunked)")
+        # Processing options with descriptions
+        console.print("\n[bold]Processing Mode Selection[/bold]")
+        console.print(Panel(
+            "[bold cyan]Standard Mode (OptimizedBatchRunner)[/bold cyan]\n"
+            "[green]✓[/green] Best for: 10-500 files\n"
+            "[green]✓[/green] Balanced performance and memory usage\n"
+            "[green]✓[/green] Smart retry handling\n"
+            "[dim]Recommended for most use cases[/dim]",
+            title="[1]",
+            box=box.ROUNDED
+        ))
         
-        mode = Prompt.ask("Select mode", choices=["1", "2", "3"], default="1")
+        console.print(Panel(
+            "[bold cyan]Ultra Mode (UltraOptimizedBatchRunner)[/bold cyan]\n"
+            "[green]✓[/green] Best for: 500-5000 files\n"
+            "[green]✓[/green] Advanced worker management\n"
+            "[green]✓[/green] Health monitoring & auto-recovery\n"
+            "[green]✓[/green] Adaptive timeout adjustment\n"
+            "[dim]For large datasets with mixed file sizes[/dim]",
+            title="[2]",
+            box=box.ROUNDED
+        ))
+        
+        console.print(Panel(
+            "[bold cyan]Memory-Efficient Mode (Chunked)[/bold cyan]\n"
+            "[green]✓[/green] Best for: 5000+ files\n"
+            "[green]✓[/green] Processes files in small batches\n"
+            "[green]✓[/green] Minimal memory footprint\n"
+            "[green]✓[/green] Prevents OOM errors\n"
+            "[dim]For very large datasets or limited RAM[/dim]",
+            title="[3]",
+            box=box.ROUNDED
+        ))
+        
+        console.print(Panel(
+            "[bold cyan]Auto-Select (Recommended)[/bold cyan]\n"
+            "[green]✓[/green] Analyzes your dataset\n"
+            "[green]✓[/green] Checks available memory\n"
+            "[green]✓[/green] Picks optimal mode\n"
+            "[dim]Let PyMM choose the best mode for you[/dim]",
+            title="[A]",
+            box=box.DOUBLE
+        ))
+        
+        mode = Prompt.ask("\nSelect mode", choices=["1", "2", "3", "a", "A"], default="a").lower()
+        
+        # Auto-select mode based on file count and memory
+        if mode == "a":
+            file_count = len(files)
+            available_memory = psutil.virtual_memory().available / (1024**3)  # GB
+            
+            console.print(f"\n[cyan]Analyzing: {file_count} files, {available_memory:.1f}GB available RAM[/cyan]")
+            
+            if file_count <= 100 and available_memory >= 4:
+                mode = "1"
+                console.print("[green]→ Selected: Standard Mode (optimal for small datasets)[/green]")
+            elif file_count <= 1000 and available_memory >= 8:
+                mode = "2"
+                console.print("[green]→ Selected: Ultra Mode (optimal for medium datasets)[/green]")
+            elif file_count > 5000 or available_memory < 4:
+                mode = "3"
+                console.print("[green]→ Selected: Memory-Efficient Mode (optimal for large datasets)[/green]")
+            elif file_count > 1000:
+                mode = "3"
+                console.print("[green]→ Selected: Memory-Efficient Mode (safer for 1000+ files)[/green]")
+            else:
+                mode = "2"
+                console.print("[green]→ Selected: Ultra Mode (best performance/memory balance)[/green]")
         
         # Start processing
         if Confirm.ask("\nStart processing?", default=True):
@@ -1810,8 +1871,17 @@ Throughput: {throughput:.2f} files/s"""
             self.config.set('use_instance_pool', use_pool)
             
             try:
+                # Get list of files to process
+                input_path = Path(input_dir)
+                files = list(input_path.glob("*.txt")) + list(input_path.glob("*.TXT"))
+                
+                if not files:
+                    console.print("[yellow]No text files found in input directory[/yellow]")
+                    input("\nPress Enter to continue...")
+                    return
+                
                 if mode == "1":
-                    self._run_processing_visual(input_dir, output_dir)
+                    self._run_processing_visual(input_dir, output_dir, files)
                 elif mode == "2":
                     self._run_ultra_processing(input_dir, output_dir)
                 elif mode == "3":
@@ -2508,6 +2578,150 @@ Output Directory: {output_path}"""
         self.config.save()
         
         console.print("\n[green]Directories configured![/green]")
+        input("\nPress Enter to continue...")
+        
+    def _configure_processing(self):
+        """Configure processing settings"""
+        console.print("\n[bold]Processing Configuration[/bold]")
+        
+        workers = IntPrompt.ask(
+            "Number of parallel workers",
+            default=self.config.get('max_parallel_workers', 4)
+        )
+        
+        timeout = IntPrompt.ask(
+            "Timeout per file (seconds)",
+            default=self.config.get('pymm_timeout', 300)
+        )
+        
+        chunk_size = IntPrompt.ask(
+            "Files per chunk",
+            default=self.config.get('chunk_size', 100)
+        )
+        
+        use_pool = Confirm.ask(
+            "Use instance pooling?",
+            default=self.config.get('use_instance_pool', True)
+        )
+        
+        self.config.set('max_parallel_workers', workers)
+        self.config.set('pymm_timeout', timeout)
+        self.config.set('chunk_size', chunk_size)
+        self.config.set('use_instance_pool', use_pool)
+        self.config.save()
+        
+        console.print("\n[green]Processing settings configured![/green]")
+        input("\nPress Enter to continue...")
+        
+    def _configure_server(self):
+        """Configure server settings"""
+        console.print("\n[bold]Server Configuration[/bold]")
+        
+        # MetaMap home
+        metamap_home = Prompt.ask(
+            "MetaMap home directory",
+            default=self.config.get('metamap_home', '')
+        )
+        
+        # Java home
+        java_home = Prompt.ask(
+            "Java home directory",
+            default=self.config.get('java_home', '/usr/lib/jvm/java-11-openjdk-amd64')
+        )
+        
+        # Server ports
+        console.print("\n[bold]Server Ports[/bold]")
+        tagger_port = IntPrompt.ask(
+            "Tagger server port",
+            default=self.config.get('tagger_server_port', 1795)
+        )
+        
+        wsd_port = IntPrompt.ask(
+            "WSD server port",
+            default=self.config.get('wsd_server_port', 5554)
+        )
+        
+        # Server options
+        console.print("\n[bold]Server Options[/bold]")
+        relaxed_model = Confirm.ask(
+            "Use relaxed model?",
+            default=self.config.get('relaxed_model', True)
+        )
+        
+        self.config.set('metamap_home', metamap_home)
+        self.config.set('java_home', java_home)
+        self.config.set('tagger_server_port', tagger_port)
+        self.config.set('wsd_server_port', wsd_port)
+        self.config.set('relaxed_model', relaxed_model)
+        self.config.save()
+        
+        console.print("\n[green]Server settings configured![/green]")
+        input("\nPress Enter to continue...")
+        
+    def _save_configuration(self):
+        """Save configuration to file"""
+        filename = Prompt.ask("Configuration filename", default="pymm_config.json")
+        
+        config_data = {
+            'metamap_binary_path': self.config.get('metamap_binary_path'),
+            'java_home': self.config.get('java_home'),
+            'max_parallel_workers': self.config.get('max_parallel_workers'),
+            'chunk_size': self.config.get('chunk_size'),
+            'pymm_timeout': self.config.get('pymm_timeout'),
+            'default_input_dir': self.config.get('default_input_dir'),
+            'default_output_dir': self.config.get('default_output_dir'),
+            'use_instance_pool': self.config.get('use_instance_pool'),
+            'tagger_server_port': self.config.get('tagger_server_port'),
+            'wsd_server_port': self.config.get('wsd_server_port'),
+            'relaxed_model': self.config.get('relaxed_model')
+        }
+        
+        with open(filename, 'w') as f:
+            json.dump(config_data, f, indent=2)
+            
+        console.print(f"\n[green]Configuration saved to {filename}[/green]")
+        input("\nPress Enter to continue...")
+        
+    def _load_configuration(self):
+        """Load configuration from file"""
+        filename = Prompt.ask("Configuration filename", default="pymm_config.json")
+        
+        if not Path(filename).exists():
+            console.print(f"[red]File {filename} not found[/red]")
+            input("\nPress Enter to continue...")
+            return
+            
+        with open(filename) as f:
+            config_data = json.load(f)
+            
+        for key, value in config_data.items():
+            if value is not None:
+                self.config.set(key, value)
+                
+        self.config.save()
+        console.print(f"\n[green]Configuration loaded from {filename}[/green]")
+        input("\nPress Enter to continue...")
+        
+    def _reset_configuration(self):
+        """Reset to default configuration"""
+        if Confirm.ask("\n[yellow]Reset all settings to defaults?[/yellow]", default=False):
+            # Reset to defaults
+            defaults = {
+                'max_parallel_workers': 4,
+                'chunk_size': 100,
+                'pymm_timeout': 300,
+                'use_instance_pool': True,
+                'relaxed_model': True,
+                'tagger_server_port': 1795,
+                'wsd_server_port': 5554
+            }
+            
+            for key, value in defaults.items():
+                self.config.set(key, value)
+                
+            self.config.save()
+            console.print("\n[green]Configuration reset to defaults![/green]")
+        
         input("\nPress Enter to continue...")
         
     def server_control(self):
