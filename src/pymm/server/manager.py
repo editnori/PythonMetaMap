@@ -38,6 +38,7 @@ class ServerManager:
             
         self._setup_logging()
         self.java_path = self._find_java()
+        self.java_available = self._check_java()
         self._fix_server_scripts()
     
     def _setup_logging(self):
@@ -46,8 +47,8 @@ class ServerManager:
     
     def _find_java(self) -> str:
         """Find Java executable path"""
-        # First check if JAVA_HOME is set
-        java_home = os.environ.get('JAVA_HOME')
+        # Check config first
+        java_home = self.config.get('java_home') or os.environ.get('JAVA_HOME')
         if java_home:
             java_path = Path(java_home) / 'bin' / 'java'
             if java_path.exists():
@@ -79,9 +80,25 @@ class ServerManager:
         except:
             pass
         
-        # Default to 'java' and hope it's in PATH
-        self.logger.warning("Could not find Java installation, defaulting to 'java'")
+        # Java not found
+        self.logger.warning("Java not found. MetaMap requires Java to run.")
+        self.logger.info("To install Java:")
+        self.logger.info("  Ubuntu/Debian: sudo apt-get install openjdk-11-jre-headless")
+        self.logger.info("  RHEL/CentOS: sudo yum install java-11-openjdk")
+        self.logger.info("  macOS: brew install openjdk@11")
+        self.logger.info("  Windows: Download from https://adoptium.net/")
         return 'java'
+    
+    def _check_java(self) -> bool:
+        """Check if Java is actually available and working"""
+        try:
+            result = subprocess.run([self.java_path, '-version'], 
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE,
+                                  text=True)
+            return result.returncode == 0
+        except (FileNotFoundError, OSError):
+            return False
     
     def _fix_server_scripts(self):
         """Fix server control scripts with correct paths"""
@@ -140,6 +157,18 @@ class ServerManager:
                 time.sleep(delay)
                 
         return False
+    
+    def is_running(self) -> bool:
+        """Check if MetaMap servers are running"""
+        return self.is_tagger_server_running()
+    
+    def start(self) -> bool:
+        """Start MetaMap servers"""
+        return self.start_all()
+    
+    def stop(self):
+        """Stop MetaMap servers"""
+        return self.stop_all()
     
     def is_tagger_server_running(self) -> bool:
         """Check if SKR/MedPost tagger server is running"""

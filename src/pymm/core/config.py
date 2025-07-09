@@ -147,6 +147,7 @@ class PyMMConfig:
     def __init__(self):
         self._config = self._load_config()
         self._apply_auto_defaults()
+        self._apply_auto_detection()
     
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from file, merge with defaults"""
@@ -170,6 +171,48 @@ class PyMMConfig:
         # Auto-configure instance count
         if self._config.get('metamap_instance_count') is None:
             self._config['metamap_instance_count'] = max(1, cpu_count // 4)
+    
+    def _apply_auto_detection(self):
+        """Apply auto-detected paths and settings"""
+        try:
+            from ..utils.auto_detector import AutoDetector
+            detector = AutoDetector()
+            
+            # Only auto-detect if not already configured
+            if not self._config.get('java_home'):
+                java_home = detector.detect_java()
+                if java_home:
+                    self._config['java_home'] = java_home
+                    
+            if not self._config.get('metamap_home'):
+                metamap_home = detector.detect_metamap()
+                if metamap_home:
+                    self._config['metamap_home'] = metamap_home
+                    
+            if not self._config.get('metamap_binary_path'):
+                metamap_binary = detector.detect_metamap_binary(
+                    self._config.get('metamap_home')
+                )
+                if metamap_binary:
+                    self._config['metamap_binary_path'] = metamap_binary
+            
+            # Auto-detect directories
+            dirs = detector.detect_data_directories()
+            if not os.path.exists(self._config.get('default_input_dir', '')):
+                self._config['default_input_dir'] = dirs['input']
+            if not os.path.exists(self._config.get('default_output_dir', '')):
+                self._config['default_output_dir'] = dirs['output']
+            
+            # Apply optimal settings if not configured
+            settings = detector.get_optimal_settings()
+            if self._config.get('max_parallel_workers') == self.DEFAULTS['max_parallel_workers']:
+                self._config['max_parallel_workers'] = settings['workers']
+            if not self._config.get('chunk_size'):
+                self._config['chunk_size'] = settings['chunk_size']
+                
+        except Exception as e:
+            # Silent fail - auto-detection is optional
+            pass
     
     def save(self):
         """Save current configuration to file"""

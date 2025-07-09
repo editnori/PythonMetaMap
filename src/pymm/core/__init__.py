@@ -1,20 +1,16 @@
-"""Core functionality for PythonMetaMap"""
-from .config import PyMMConfig
-from .exceptions import (
-    PyMMError, 
-    ServerConnectionError, 
-    ParseError, 
-    MetamapStuck,
-    ConfigurationError
-)
+"""Core modules for PythonMetaMap"""
+from .config import PyMMConfig, Config
 from .state import StateManager
+from .enhanced_state import AtomicStateManager, FileTracker
+from .exceptions import MetamapStuck, ServerConnectionError, ParseError
 
 __all__ = [
     'PyMMConfig',
-    'PyMMError',
-    'ServerConnectionError', 
-    'ParseError',
+    'Config',
+    'StateManager',
+    'AtomicStateManager',
+    'FileTracker',
     'MetamapStuck',
-    'ConfigurationError',
-    'StateManager'
+    'ServerConnectionError',
+    'ParseError'
 ]

@@ -1,21 +1,25 @@
-# PythonMetaMap v8.1.8 Dependencies
-# Core runtime dependencies for processing medical text with MetaMap
+# Core dependencies
+click>=8.0.0
+rich>=10.0.0
+psutil>=5.8.0
+tqdm>=4.60.0
 
-# Core CLI and UI
-click>=8.0.0        # Command-line interface framework
-rich>=12.0.0        # Rich terminal formatting and progress bars
-tqdm>=4.64.0        # Progress bars for batch processing
+# MetaMap integration
+jpype1>=1.4.0
+pyMetaMap>=0.2
 
-# System and process management
-psutil>=5.9.0       # Process and system monitoring
+# Data processing
+pandas>=1.3.0
+numpy>=1.20.0
+openpyxl>=3.0.0
+chardet>=4.0.0
 
-# Data analysis and visualization
-pandas>=1.3.0       # Data manipulation and CSV processing
-numpy>=1.3.0        # Numerical operations (required by pandas/matplotlib)
-matplotlib>=3.4.0   # Creating charts and visualizations
-seaborn>=0.11.0     # Statistical data visualization
-openpyxl>=3.0.0     # Excel file export support
+# System requirements checking
+distro>=1.5.0
+py-cpuinfo>=8.0.0
 
-# Optional dependencies (uncomment if needed)
-# JPype1>=1.4.0     # Java-Python bridge (for future Java integration)
-# colorama>=0.4.4   # Cross-platform colored terminal output
+# Analysis (optional)
+matplotlib>=3.4.0
+seaborn>=0.11.0
+scikit-learn>=0.24.0
+wordcloud>=1.8.0

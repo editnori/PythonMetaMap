@@ -20,11 +20,9 @@ from .cmdexecutor import MetamapCommand
 # Import refactored components
 from .core import (
     PyMMConfig,
-    PyMMError,
     ServerConnectionError, 
     ParseError,
     MetamapStuck,
-    ConfigurationError,
     StateManager
 )
 
@@ -57,11 +55,9 @@ __all__ = [
     
     # Core components
     'PyMMConfig',
-    'PyMMError',
     'ServerConnectionError',
     'ParseError', 
     'MetamapStuck',
-    'ConfigurationError',
     'StateManager',
     
     # Server components
@@ -82,7 +78,7 @@ __all__ = [
 ]
 
 # Version information
-__version__ = '8.1.8'
+__version__ = '8.2.0'
 __author__ = 'Dr.Layth Qassem'
 __email__ = ''
 

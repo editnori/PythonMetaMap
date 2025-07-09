@@ -26,7 +26,7 @@ def setup_package():
     
     setup(
         name="pythonmetamap",
-        version="8.1.9",
+        version="8.2.0",
         author="Layth Qassem",
         author_email="layth@example.com",
         description="Advanced Python wrapper for NLM MetaMap with Java API integration",

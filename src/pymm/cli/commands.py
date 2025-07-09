@@ -1182,3 +1182,271 @@ def retry_failed(output_dir, config, max_attempts, delay, filter_error, dry_run)
     
     if failed_files:
         console.print("\n[yellow]Some files still failing. Run again to retry or check logs for details.[/yellow]")
+
+@click.command(name="process")
+@click.argument("input_dir", type=click.Path(exists=True), required=False)
+@click.argument("output_dir", type=click.Path(), required=False)
+@click.option("-w", "--workers", type=int, help="Number of parallel workers")
+@click.option("-t", "--timeout", type=int, help="Processing timeout per file (seconds)")
+@click.option("-r", "--retry", type=int, help="Max retry attempts per file")
+@click.option("--instance-pool/--no-instance-pool", default=None, help="Use MetaMap instance pooling (auto-detected if not specified)")
+@click.option("--start-servers/--no-start-servers", default=True, help="Automatically start MetaMap servers")
+@click.option("-m", "--interactive-monitor", is_flag=True, help="Enable interactive monitoring during processing")
+@click.option("-b", "--background", is_flag=True, help="Run in background mode (for nohup)")
+@click.pass_context
+def process_cmd(ctx, input_dir, output_dir, workers, timeout, retry, instance_pool, start_servers, interactive_monitor, background):
+    """Process files through MetaMap
+    
+    Examples:
+    
+        pymm process input_notes/ output_csvs/
+        
+        pymm process data/notes/ results/ --workers 8 --timeout 600
+        
+        # Run in background
+        nohup pymm process input_notes/ output_csvs/ --background &
+    """
+    config = ctx.obj
+    
+    # Use defaults if not provided
+    if not input_dir:
+        input_dir = config.get("default_input_dir", "./input_notes")
+    if not output_dir:
+        output_dir = config.get("default_output_dir", "./output_csvs")
+    
+    # Validate directories
+    input_path = Path(input_dir)
+    if not input_path.exists():
+        console.print(f"[red]Error: Input directory '{input_dir}' does not exist[/red]")
+        ctx.exit(1)
+    
+    # Update configuration
+    if workers:
+        config.set("max_parallel_workers", workers)
+    if timeout:
+        config.set("pymm_timeout", timeout)
+    if retry is not None: # Handle None explicitly
+        config.set("retry_max_attempts", retry)
+    if instance_pool is not None: # Handle None explicitly
+        config.set("use_instance_pool", instance_pool)
+    if not start_servers: # Handle False explicitly
+        config.set("start_servers", False)
+    
+    # Configure background mode
+    if background:
+        config.set("progress_bar", False)
+    
+    # Import and use chunked batch runner
+    from ..processing.batch_runner import BatchRunner
+    
+    try:
+        # Create and run chunked batch processor
+        runner = BatchRunner(input_dir, output_dir, config)
+        
+        if not start_servers:
+            console.print("[yellow]Skipping server start as per --no-start-servers flag.[/yellow]")
+        elif runner.start_servers():
+            console.print("[green]✓ Servers started successfully.[/green]")
+        else:
+            console.print("[red]✗ Failed to start servers. Please check logs.[/red]")
+            ctx.exit(1)
+
+        if interactive_monitor:
+            console.print("\n[cyan]Interactive monitoring enabled.[/cyan]")
+            # Run in foreground with interactive monitoring
+            runner.run_with_interactive_monitor()
+        else:
+            # Run in foreground
+            console.print("\n[cyan]Starting batch processing...[/cyan]")
+            
+            # Show configuration
+            table = Table(title="Processing Configuration")
+            table.add_column("Setting", style="cyan")
+            table.add_column("Value", style="green")
+            
+            table.add_row("Input Directory", str(input_dir))
+            table.add_row("Output Directory", str(output_dir))
+            table.add_row("Max Workers", str(config.get("max_parallel_workers", 4)))
+            table.add_row("Timeout (seconds)", str(config.get("pymm_timeout", 300)))
+            table.add_row("Max Retry Attempts", str(config.get("retry_max_attempts", 3)))
+            table.add_row("Instance Pool", "Enabled" if config.get("use_instance_pool", True) else "Disabled")
+            
+            console.print(table)
+            
+            # Run processing
+            results = runner.run()
+            
+            # Show results
+            if results.get("success"):
+                console.print(f"\n[green]✓ Processing complete![/green]")
+                
+                result_table = Table(title="Processing Summary")
+                result_table.add_column("Metric", style="cyan")
+                result_table.add_column("Value", style="green")
+                
+                result_table.add_row("Total Files", str(results.get("total_files", 0)))
+                result_table.add_row("Processed", str(results.get("processed", 0)))
+                result_table.add_row("Failed", str(results.get("failed", 0)))
+                result_table.add_row("Chunks Processed", str(results.get("chunks_processed", 0)))
+                result_table.add_row("Time Elapsed", f"{results.get('elapsed_time', 0):.2f}s")
+                result_table.add_row("Throughput", f"{results.get('throughput', 0):.2f} files/s")
+                
+                console.print(result_table)
+            else:
+                console.print(f"\n[red]✗ Processing failed: {results.get('error', 'Unknown error')}[/red]")
+                ctx.exit(1)
+                
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Processing interrupted by user[/yellow]")
+        ctx.exit(130)
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        if config.get("debug"):
+            import traceback
+            traceback.print_exc()
+        ctx.exit(1)
+
+@click.command(name="chunked-process")
+@click.argument("input_dir", type=click.Path(exists=True), required=False)
+@click.argument("output_dir", type=click.Path(), required=False)
+@click.option("-w", "--workers", type=int, help="Number of parallel workers")
+@click.option("-t", "--timeout", type=int, help="Processing timeout per file (seconds)")
+@click.option("-c", "--chunk-size", type=int, default=500, help="Files per chunk (default: 500)")
+@click.option("--clear-state", is_flag=True, help="Clear previous processing state")
+@click.option("-b", "--background", is_flag=True, help="Run in background mode")
+@click.pass_context
+def chunked_process_cmd(ctx, input_dir, output_dir, workers, timeout, chunk_size, clear_state, background):
+    """Process large file sets efficiently with chunking
+    
+    Optimized for processing thousands of files without memory issues.
+    
+    Examples:
+    
+        pymm chunked-process input_notes/ output_csvs/
+        
+        pymm chunked-process data/ results/ --workers 6 --chunk-size 1000
+        
+        # Clear state and start fresh
+        pymm chunked-process input_notes/ output_csvs/ --clear-state
+    """
+    config = ctx.obj
+    
+    # Use defaults if not provided
+    if not input_dir:
+        input_dir = config.get("default_input_dir", "./input_notes")
+    if not output_dir:
+        output_dir = config.get("default_output_dir", "./output_csvs")
+    
+    # Validate directories
+    input_path = Path(input_dir)
+    if not input_path.exists():
+        console.print(f"[red]Error: Input directory '{input_dir}' does not exist[/red]")
+        ctx.exit(1)
+    
+    # Update configuration
+    if workers:
+        config.set("max_parallel_workers", workers)
+    if timeout:
+        config.set("pymm_timeout", timeout)
+    config.set("chunk_size", chunk_size)
+    
+    # Configure background mode
+    if background:
+        config.set("progress_bar", False)
+    
+    # Import and use chunked batch runner
+    from ..processing.chunked_batch_runner import ChunkedBatchRunner
+    
+    try:
+        # Create and run chunked batch processor
+        runner = ChunkedBatchRunner(input_dir, output_dir, config)
+        
+        if clear_state:
+            console.print("[yellow]Clearing previous processing state...[/yellow]")
+            runner.clear_state()
+        
+        if background:
+            console.print("\n[yellow]Starting chunked background processing...[/yellow]")
+            # For background mode, we need to handle differently
+            import subprocess
+            import sys
+            import os
+            
+            log_file = Path(output_dir) / "logs" / f"chunked_background_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            cmd = [
+                sys.executable, "-m", "pymm", "chunked-process",
+                str(input_dir), str(output_dir),
+                "--workers", str(config.get("max_parallel_workers", 4)),
+                "--timeout", str(config.get("pymm_timeout", 300)),
+                "--chunk-size", str(chunk_size)
+            ]
+            
+            with open(log_file, 'w') as log:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    preexec_fn=os.setsid if os.name != 'nt' else None
+                )
+            
+            pid_file = Path(output_dir) / ".background_pid"
+            pid_file.write_text(str(process.pid))
+            
+            console.print(f"[green]✓ Background processing started![/green]")
+            console.print(f"  PID: {process.pid}")
+            console.print(f"  Log: {log_file}")
+            console.print(f"\nMonitor progress with:")
+            console.print(f"  tail -f {log_file}")
+            console.print(f"\nCheck status with:")
+            console.print(f"  pymm status {output_dir}")
+        else:
+            # Run in foreground
+            console.print("\n[cyan]Starting chunked batch processing...[/cyan]")
+            
+            # Show configuration
+            table = Table(title="Processing Configuration")
+            table.add_column("Setting", style="cyan")
+            table.add_column("Value", style="green")
+            
+            table.add_row("Input Directory", str(input_dir))
+            table.add_row("Output Directory", str(output_dir))
+            table.add_row("Max Workers", str(config.get("max_parallel_workers", 4)))
+            table.add_row("Timeout (seconds)", str(config.get("pymm_timeout", 300)))
+            table.add_row("Chunk Size", str(chunk_size))
+            
+            console.print(table)
+            
+            # Run processing
+            results = runner.run()
+            
+            # Show results
+            if results.get("success"):
+                console.print(f"\n[green]✓ Processing complete![/green]")
+                
+                result_table = Table(title="Processing Summary")
+                result_table.add_column("Metric", style="cyan")
+                result_table.add_column("Value", style="green")
+                
+                result_table.add_row("Total Files", str(results.get("total_files", 0)))
+                result_table.add_row("Processed", str(results.get("processed", 0)))
+                result_table.add_row("Failed", str(results.get("failed", 0)))
+                result_table.add_row("Chunks Processed", str(results.get("chunks_processed", 0)))
+                result_table.add_row("Time Elapsed", f"{results.get('elapsed_time', 0):.2f}s")
+                result_table.add_row("Throughput", f"{results.get('throughput', 0):.2f} files/s")
+                
+                console.print(result_table)
+            else:
+                console.print(f"\n[red]✗ Processing failed: {results.get('error', 'Unknown error')}[/red]")
+                ctx.exit(1)
+                
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Processing interrupted by user[/yellow]")
+        ctx.exit(130)
+    except Exception as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        if config.get("debug"):
+            import traceback
+            traceback.print_exc()
+        ctx.exit(1)

@@ -1,13 +1,15 @@
-"""Processing modules for PythonMetaMap"""
+"""Processing module for PythonMetaMap"""
 from .batch_runner import BatchRunner
-from .retry_manager import RetryManager
-from .pool_manager import MetaMapInstancePool, AdaptivePoolManager
+from .chunked_batch_runner import ChunkedBatchRunner
 from .worker import FileProcessor
+from .pool_manager import MetaMapInstancePool, AdaptivePoolManager
+from .retry_manager import RetryManager
 
 __all__ = [
     'BatchRunner',
-    'RetryManager', 
+    'ChunkedBatchRunner',
+    'FileProcessor', 
     'MetaMapInstancePool',
     'AdaptivePoolManager',
-    'FileProcessor'
+    'RetryManager'
 ]
