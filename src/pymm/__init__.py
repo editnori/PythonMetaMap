@@ -78,9 +78,9 @@ __all__ = [
 ]
 
 # Version information
-__version__ = '8.2.1'
-__author__ = 'Dr.Layth Qassem'
-__email__ = ''
+__version__ = '8.2.8'
+__author__ = 'Dr. Layth Qassem, PharmD, MS'
+__email__ = 'layth.qassem@vanderbilt.edu, layth888.qassem@vumc.org'
 
 # Allow configuring global settings via environment variables
 PYMM_DEBUG = os.environ.get('PYMM_DEBUG', '').lower() in ('true', 'yes', '1')

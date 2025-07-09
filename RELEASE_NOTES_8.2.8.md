@@ -1,4 +1,4 @@
-# Release Notes - PythonMetaMap v8.2.1
+# Release Notes - PythonMetaMap v8.2.8
 
 ## 🧹 Code Cleanup Release
 
