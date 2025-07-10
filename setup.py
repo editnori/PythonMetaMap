@@ -15,8 +15,9 @@ long_description = readme_path.read_text(encoding="utf-8") if readme_path.exists
 
 entry_points = {
     'console_scripts': [
-        'pymm = pymm.cli.main:main',
-        'pymm-cli = pymm.cli.main:main',  # Backward compatibility
+        'pymm = pymm.cli.pymm_wrapper:main',
+        'pymm-cli = pymm.cli.pymm_wrapper:main',  # Backward compatibility
+        'pymm-simple = pymm.cli.main_simple:main',  # Simplified version without scipy
     ]
 }
 
@@ -26,7 +27,7 @@ def setup_package():
     
     setup(
         name="pythonmetamap",
-        version="9.4.2",
+        version="9.4.3",
         author="Dr. Layth Qassem, PharmD, MS",
         author_email="layth.qassem@vanderbilt.edu",
         description="Advanced Python wrapper for NLM MetaMap with Java API integration",
