@@ -838,11 +838,22 @@ def explore_output(output_dir, detailed, concepts):
 
 @click.command()
 @click.option('--output-dir', '-o', type=click.Path(exists=True), 
-              help='Output directory to monitor')
+              help='Output directory to monitor (deprecated - use job monitor instead)')
 @click.option('--follow', '-f', is_flag=True, help='Follow log output')
 @click.option('--stats', '-s', is_flag=True, help='Show detailed statistics')
-def monitor(output_dir, follow, stats):
-    """Monitor background processing status"""
+@click.option('--live', '-l', is_flag=True, help='Launch live job monitor')
+def monitor(output_dir, follow, stats, live):
+    """Monitor processing jobs"""
+    # Launch live job monitor if requested
+    if live:
+        from ..cli.monitor import monitor_jobs
+        try:
+            monitor_jobs()
+        except KeyboardInterrupt:
+            pass
+        return
+    
+    # Legacy single-job monitoring
     config = PyMMConfig()
     
     if not output_dir:
@@ -1193,8 +1204,9 @@ def retry_failed(output_dir, config, max_attempts, delay, filter_error, dry_run)
 @click.option("--start-servers/--no-start-servers", default=True, help="Automatically start MetaMap servers")
 @click.option("-m", "--interactive-monitor", is_flag=True, help="Enable interactive monitoring during processing")
 @click.option("-b", "--background", is_flag=True, help="Run in background mode (for nohup)")
+@click.option("--job-id", type=str, help="Job ID for tracking (used internally)")
 @click.pass_context
-def process_cmd(ctx, input_dir, output_dir, workers, timeout, retry, instance_pool, start_servers, interactive_monitor, background):
+def process_cmd(ctx, input_dir, output_dir, workers, timeout, retry, instance_pool, start_servers, interactive_monitor, background, job_id):
     """Process files through MetaMap
     
     Examples:
@@ -1235,6 +1247,10 @@ def process_cmd(ctx, input_dir, output_dir, workers, timeout, retry, instance_po
     # Configure background mode
     if background:
         config.set("progress_bar", False)
+    
+    # Set job ID if provided
+    if job_id:
+        config.set("job_id", job_id)
     
     # Import and use chunked batch runner
     from ..processing.batch_runner import BatchRunner

@@ -51,6 +51,17 @@ class BatchRunner:
         self.max_workers = config.get("max_parallel_workers", 4)
         self.timeout = config.get("pymm_timeout", 300)
         
+        # Job management
+        self.job_id = config.get("job_id", None)
+        self.job_manager = None
+        if self.job_id:
+            try:
+                from ..core.job_manager import get_job_manager
+                self.job_manager = get_job_manager()
+                logger.info(f"Connected to job manager with job ID: {self.job_id}")
+            except Exception as e:
+                logger.warning(f"Could not connect to job manager: {e}")
+        
         # Handle string boolean values
         use_pool = config.get("use_instance_pool", True)
         if isinstance(use_pool, str):
@@ -75,7 +86,9 @@ class BatchRunner:
         # Instance pool
         self.instance_pool = None
         if self.use_instance_pool:
+            logger.info(f"Creating MetaMapInstancePool, type: {MetaMapInstancePool}")
             self.instance_pool = MetaMapInstancePool(config)
+            logger.info(f"Created instance pool of type: {type(self.instance_pool)}")
         
         # Progress tracking
         self.progress_queue = Queue()
@@ -165,6 +178,8 @@ class BatchRunner:
         
         try:
             # Get instance from pool
+            logger.debug(f"Getting instance from pool of type: {type(self.instance_pool)}")
+            logger.debug(f"Pool has get_instance: {hasattr(self.instance_pool, 'get_instance')}")
             instance_id, mm_instance = self.instance_pool.get_instance()
             
             # Process file with pooled instance
@@ -277,6 +292,15 @@ class BatchRunner:
                             progress.update(task, completed=completed)
                             last_update_time = current_time
                             last_percentage = current_percentage
+                            
+                            # Update job manager
+                            if self.job_manager and self.job_id:
+                                self.job_manager.update_progress(self.job_id, {
+                                    'total_files': len(files),
+                                    'processed': results["processed"],
+                                    'failed': results["failed"],
+                                    'percentage': current_percentage
+                                })
                     
                     # Final update to ensure 100%
                     progress.update(task, completed=len(files))
@@ -322,6 +346,10 @@ class BatchRunner:
     def run(self) -> Dict[str, Any]:
         """Run batch processing"""
         logger.info("Starting batch processing")
+        
+        # Update job status if connected to job manager
+        if self.job_manager and self.job_id:
+            self.job_manager.start_job(self.job_id)
         
         # Ensure servers are running
         tagger_running = self.server_manager.is_tagger_server_running()
@@ -409,6 +437,14 @@ class BatchRunner:
             if self.instance_pool:
                 logger.info("Shutting down MetaMap instance pool...")
                 self.instance_pool.shutdown()
+            
+            # Update job status
+            if self.job_manager and self.job_id:
+                if 'results' in locals():
+                    error = None if results.get('success', True) else results.get('error', 'Processing failed')
+                    self.job_manager.complete_job(self.job_id, error)
+                else:
+                    self.job_manager.complete_job(self.job_id, "Process terminated unexpectedly")
     
     @classmethod
     def resume(cls, output_dir: str, config: PyMMConfig) -> Dict[str, Any]:

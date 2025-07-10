@@ -469,5 +469,5 @@ class WorkerPool:
         return stats
 
 
-# Import the actual MetaMapInstancePool
+# Import the actual MetaMapInstancePool from instance_pool module
 from .instance_pool import MetaMapInstancePool

@@ -108,7 +108,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.6.8[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v8.7.8[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1280,7 +1280,7 @@ class UltimateInteractiveNavigator:
                 ("5", "Analysis Tools", "magenta"),
                 ("6", "Configuration", COLORS['warning']),
                 ("7", "Server Control", COLORS['error']),
-                ("8", "Background Jobs", "cyan"),
+                ("8", "Job Monitor", "cyan"),
                 ("9", "Resume/Retry", "yellow"),
                 ("*", "Logs & Monitor", "white"),
                 ("0", "Help", "dim"),
@@ -1336,7 +1336,7 @@ class UltimateInteractiveNavigator:
         elif choice == "7":
             self.server_control()
         elif choice == "8":
-            self.background_jobs()
+            self.job_monitor()
         elif choice == "9":
             self.resume_retry()
         elif choice == "*":
@@ -1995,13 +1995,56 @@ Throughput: {throughput:.2f} files/s"""
                     # Run in background mode
                     console.print("\n[yellow]Starting background processing...[/yellow]")
                     
-                    # Create background processor
-                    bg_processor = BackgroundProcessor(output_dir)
-                    job_id = bg_processor.start_background_process(input_dir, output_dir)
+                    # Import job manager
+                    from ..core.job_manager import get_job_manager, JobType
+                    job_manager = get_job_manager()
+                    
+                    # Determine job type based on mode
+                    job_type_map = {
+                        "1": JobType.OPTIMIZED,
+                        "2": JobType.ULTRA,
+                        "3": JobType.CHUNKED
+                    }
+                    job_type = job_type_map.get(mode, JobType.BATCH)
+                    
+                    # Create job
+                    job_id = job_manager.create_job(
+                        job_type=job_type,
+                        input_dir=input_dir,
+                        output_dir=output_dir,
+                        config={
+                            'workers': workers,
+                            'timeout': timeout,
+                            'chunk_size': chunk_size,
+                            'use_pool': use_pool
+                        }
+                    )
+                    
+                    # Start background process
+                    cmd = [
+                        sys.executable, "-m", "pymm", "process",
+                        input_dir, output_dir,
+                        "--background",
+                        "--job-id", job_id
+                    ]
+                    
+                    log_file = Path(output_dir) / "logs" / f"{job_id}.log"
+                    log_file.parent.mkdir(exist_ok=True)
+                    
+                    with open(log_file, 'w') as f:
+                        process = subprocess.Popen(
+                            cmd,
+                            stdout=f,
+                            stderr=subprocess.STDOUT,
+                            text=True
+                        )
+                    
+                    # Update job with PID
+                    job_manager.start_job(job_id, process.pid)
                     
                     console.print(f"\n[green]✓ Background job started with ID: {job_id}[/green]")
-                    console.print("[cyan]Monitor progress with: pymm jobs list[/cyan]")
-                    console.print("[cyan]Or use the Background Jobs menu (option 8)[/cyan]")
+                    console.print("[cyan]Monitor progress in the Job Monitor (option 7)[/cyan]")
+                    console.print("[cyan]Or use: pymm monitor[/cyan]")
                 else:
                     # Run in foreground mode
                     if mode == "1":
@@ -3424,6 +3467,188 @@ Output Directory: {output_path}"""
         # Start job
         job_id = self.background_processor.start_background_process(input_dir, output_dir)
         console.print(f"\n[green]Started background job: {job_id}[/green]")
+    
+    def job_monitor(self):
+        """Unified job monitoring system"""
+        from ..cli.monitor import JobMonitor
+        from ..core.job_manager import get_job_manager, JobStatus
+        
+        while True:
+            self.clear_screen()
+            console.print(Panel(
+                "[bold]Job Monitor[/bold]\nLive monitoring of all processing jobs",
+                box=box.DOUBLE,
+                style="bright_blue"
+            ))
+            
+            job_manager = get_job_manager()
+            jobs = job_manager.list_jobs(limit=20)
+            
+            # Summary stats
+            active = len([j for j in jobs if j.status == JobStatus.RUNNING])
+            completed = len([j for j in jobs if j.status == JobStatus.COMPLETED])
+            failed = len([j for j in jobs if j.status == JobStatus.FAILED])
+            
+            stats_table = Table(box=box.SIMPLE)
+            stats_table.add_column("Active", style="green", justify="center")
+            stats_table.add_column("Completed", style="blue", justify="center")
+            stats_table.add_column("Failed", style="red", justify="center")
+            stats_table.add_column("Total", style="yellow", justify="center")
+            
+            stats_table.add_row(
+                f"[bold]{active}[/bold]",
+                f"[bold]{completed}[/bold]",
+                f"[bold]{failed}[/bold]",
+                f"[bold]{len(jobs)}[/bold]"
+            )
+            
+            console.print(Align.center(stats_table))
+            console.print()
+            
+            # Jobs table
+            if jobs:
+                job_table = Table(title="Recent Jobs", box=box.ROUNDED)
+                job_table.add_column("ID", style="cyan", width=25)
+                job_table.add_column("Type", style="yellow", width=10)
+                job_table.add_column("Status", width=12)
+                job_table.add_column("Progress", width=20)
+                job_table.add_column("Duration", style="dim", width=10)
+                
+                for job in jobs[:10]:  # Show top 10
+                    # Status color
+                    status_color = {
+                        JobStatus.RUNNING: "green",
+                        JobStatus.COMPLETED: "blue",
+                        JobStatus.FAILED: "red",
+                        JobStatus.CANCELLED: "yellow",
+                        JobStatus.QUEUED: "cyan"
+                    }.get(job.status, "white")
+                    
+                    status_text = f"[{status_color}]{job.status.value}[/{status_color}]"
+                    
+                    # Progress
+                    progress = job.progress or {}
+                    if job.status == JobStatus.RUNNING and progress.get('percentage', 0) > 0:
+                        percentage = progress['percentage']
+                        bar_width = 15
+                        filled = int(bar_width * percentage / 100)
+                        empty = bar_width - filled
+                        progress_bar = f"[green]{'█' * filled}[/green][dim]{'░' * empty}[/dim] {percentage}%"
+                    else:
+                        progress_bar = "[dim]—[/dim]"
+                    
+                    # Duration
+                    if job.end_time:
+                        duration = job.end_time - job.start_time
+                    else:
+                        duration = datetime.now() - job.start_time
+                    
+                    duration_str = str(duration).split('.')[0]  # Remove microseconds
+                    
+                    job_table.add_row(
+                        job.job_id[:25],
+                        job.job_type.value,
+                        status_text,
+                        progress_bar,
+                        duration_str
+                    )
+                
+                console.print(job_table)
+            else:
+                console.print("[dim]No jobs found[/dim]")
+            
+            # Menu options
+            console.print("\n[bold]Options:[/bold]")
+            console.print("[1] Live Monitor (full screen)")
+            console.print("[2] View Job Details")
+            console.print("[3] Cancel Job")
+            console.print("[4] Clear Completed Jobs")
+            console.print("[5] Export Job Report")
+            console.print("[R] Refresh")
+            console.print("[B] Back")
+            
+            choice = Prompt.ask("\nSelect option", default="b").lower()
+            
+            if choice == "b":
+                break
+            elif choice == "1":
+                # Launch full screen monitor
+                console.print("\n[yellow]Launching live monitor...[/yellow]")
+                console.print("[dim]Press Ctrl+C to return[/dim]")
+                time.sleep(1)
+                
+                monitor = JobMonitor()
+                try:
+                    monitor.run()
+                except KeyboardInterrupt:
+                    pass
+                
+            elif choice == "2":
+                # View job details
+                job_id = Prompt.ask("Enter job ID")
+                job = job_manager.get_job(job_id)
+                
+                if job:
+                    details = f"""
+[bold]Job Details[/bold]
+ID: {job.job_id}
+Type: {job.job_type.value}
+Status: {job.status.value}
+Started: {job.start_time}
+Input: {job.input_dir}
+Output: {job.output_dir}
+"""
+                    if job.progress:
+                        details += f"\nProgress: {job.progress}"
+                    if job.error:
+                        details += f"\n[red]Error: {job.error}[/red]"
+                    
+                    console.print(Panel(details, box=box.ROUNDED))
+                else:
+                    console.print("[red]Job not found[/red]")
+                
+                input("\nPress Enter to continue...")
+                
+            elif choice == "3":
+                # Cancel job
+                job_id = Prompt.ask("Enter job ID to cancel")
+                if Confirm.ask(f"Cancel job {job_id}?"):
+                    if job_manager.cancel_job(job_id):
+                        console.print("[green]Job cancelled[/green]")
+                    else:
+                        console.print("[red]Failed to cancel job[/red]")
+                    time.sleep(1)
+                    
+            elif choice == "4":
+                # Clear completed
+                if Confirm.ask("Clear all completed jobs?"):
+                    job_manager.cleanup_old_jobs(0)  # Clear all completed
+                    console.print("[green]Completed jobs cleared[/green]")
+                    time.sleep(1)
+                    
+            elif choice == "5":
+                # Export report
+                report_path = Path.home() / f"pymm_jobs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                
+                report_data = {
+                    'generated': datetime.now().isoformat(),
+                    'summary': {
+                        'active': active,
+                        'completed': completed,
+                        'failed': failed,
+                        'total': len(jobs)
+                    },
+                    'jobs': [job.to_dict() for job in jobs]
+                }
+                
+                with open(report_path, 'w') as f:
+                    json.dump(report_data, f, indent=2)
+                
+                console.print(f"[green]Report exported to: {report_path}[/green]")
+                input("\nPress Enter to continue...")
+                
+            elif choice == "r":
+                continue  # Refresh
         
     def resume_retry(self):
         """Resume or retry failed processing"""

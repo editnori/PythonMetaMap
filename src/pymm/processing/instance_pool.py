@@ -159,3 +159,7 @@ class MetaMapInstancePool:
                 break
         
         logger.info(f"Pool closed. Final stats: {self.get_stats()}")
+    
+    def shutdown(self):
+        """Shutdown the pool (alias for close)"""
+        self.close()
