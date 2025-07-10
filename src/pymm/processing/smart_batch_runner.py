@@ -285,6 +285,17 @@ class SmartBatchRunner(ValidatedBatchRunner):
                 if not Confirm.ask("\n[yellow]Validation failed. Continue anyway?[/yellow]", default=False):
                     return {"status": "failed", "reason": "validation_failed"}
                     
+        # Start servers if needed
+        if not self.server_manager.is_running():
+            console.print("\n[cyan]Starting MetaMap servers...[/cyan]")
+            try:
+                self.server_manager.start_all()
+                time.sleep(3)  # Give servers time to initialize
+                console.print("[green]MetaMap servers started successfully[/green]")
+            except Exception as e:
+                console.print(f"[red]Failed to start servers: {e}[/red]")
+                return {"status": "failed", "reason": "server_start_failed"}
+        
         # Start processing
         console.print("\n[bold green]Starting smart batch processing...[/bold green]\n")
         
@@ -317,16 +328,30 @@ class SmartBatchRunner(ValidatedBatchRunner):
                 output_path = self.tracker.mark_file_started(file_path)
                 
                 try:
-                    # Process file (would use actual processor here)
+                    # Process file
                     from ..processing.worker import FileProcessor
-                    processor = FileProcessor(self.config)
+                    
+                    # Get required configuration
+                    metamap_binary = self.config.get('metamap_binary_path')
+                    if not metamap_binary:
+                        raise ValueError("MetaMap binary path not configured")
+                        
+                    processor = FileProcessor(
+                        metamap_binary_path=metamap_binary,
+                        output_dir=str(Path(output_path).parent),
+                        metamap_options=self.config.get('metamap_processing_options', ''),
+                        timeout=self.config.get('pymm_timeout', 300)
+                    )
                     
                     # Process
-                    success = processor.process_file(str(file_path), output_path)
+                    success, processing_time, error_msg = processor.process_file(str(file_path))
                     
                     if success:
+                        # The actual output file created by processor
+                        actual_output = Path(output_path).parent / f"{file_path.stem}.csv"
+                        
                         # Count concepts in output
-                        concepts_found = self._count_concepts_in_csv(output_path)
+                        concepts_found = self._count_concepts_in_csv(str(actual_output))
                         processing_time = time.time() - start_time
                         
                         self.tracker.mark_file_completed(
@@ -338,11 +363,13 @@ class SmartBatchRunner(ValidatedBatchRunner):
                         results["processed"] += 1
                         results["total_concepts"] += concepts_found
                     else:
-                        self.tracker.mark_file_failed(file_path, "Processing failed")
+                        self.tracker.mark_file_failed(file_path, error_msg or "Processing failed")
                         results["failed"] += 1
                         
                 except Exception as e:
-                    self.tracker.mark_file_failed(file_path, str(e))
+                    error_msg = str(e)
+                    console.print(f"[red]Error processing {file_path.name}: {error_msg}[/red]")
+                    self.tracker.mark_file_failed(file_path, error_msg)
                     results["failed"] += 1
                     
                 progress.update(task, advance=1)

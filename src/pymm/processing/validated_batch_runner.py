@@ -338,4 +338,4 @@ class ValidatedBatchRunner(OptimizedBatchRunner):
             
         # Run the actual processing
         console.print("\n[bold cyan]Starting batch processing...[/bold cyan]\n")
-        return super().run()
+        return super().run(progress_callback=None)
