@@ -117,6 +117,14 @@ class ValidatedBatchRunner(OptimizedBatchRunner):
             ports_msg
         )
         
+        # 8. Check if servers are running
+        servers_running, servers_status = self._check_servers_running()
+        result.add_check(
+            "Server Status",
+            servers_running,
+            servers_status
+        )
+        
         return result
         
     def _check_java(self) -> Tuple[bool, str]:
@@ -257,6 +265,23 @@ class ValidatedBatchRunner(OptimizedBatchRunner):
             return False, f"Ports in use: {', '.join(blocked)}"
         else:
             return True, "All ports available"
+            
+    def _check_servers_running(self) -> Tuple[bool, str]:
+        """Check if MetaMap servers are running"""
+        try:
+            tagger_running = self.server_manager.is_tagger_server_running()
+            wsd_running = self.server_manager.is_wsd_server_running()
+            
+            if tagger_running and wsd_running:
+                return True, "Both servers running"
+            elif tagger_running:
+                return False, "Only Tagger server running (WSD server not running)"
+            elif wsd_running:
+                return False, "Only WSD server running (Tagger server not running)"
+            else:
+                return False, "No servers running (will start automatically)"
+        except Exception as e:
+            return False, f"Unable to check server status: {e}"
             
     def display_validation_results(self, result: ValidationResult) -> bool:
         """Display validation results in a nice table"""

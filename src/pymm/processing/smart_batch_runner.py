@@ -34,6 +34,11 @@ class SmartBatchRunner(ValidatedBatchRunner):
             config
         )
         
+        # Ensure server_manager is initialized
+        from ..server.manager import ServerManager
+        if not hasattr(self, 'server_manager'):
+            self.server_manager = ServerManager(config)
+        
     def show_processing_options(self) -> Tuple[List[Path], str]:
         """Show interactive processing options to user"""
         # First check if this is a new setup
@@ -327,12 +332,29 @@ class SmartBatchRunner(ValidatedBatchRunner):
                 validation_passed = True
                     
         # Start servers if needed
-        if not self.server_manager.is_running():
+        console.print("\n[cyan]Checking MetaMap server status...[/cyan]")
+        tagger_running = self.server_manager.is_tagger_server_running()
+        wsd_running = self.server_manager.is_wsd_server_running()
+        console.print(f"  Tagger Server: {'[green]Running[/green]' if tagger_running else '[red]Not Running[/red]'}")
+        console.print(f"  WSD Server: {'[green]Running[/green]' if wsd_running else '[red]Not Running[/red]'}")
+        
+        if not (tagger_running and wsd_running):
             console.print("\n[cyan]Starting MetaMap servers...[/cyan]")
             try:
                 self.server_manager.start_all()
-                time.sleep(3)  # Give servers time to initialize
-                console.print("[green]MetaMap servers started successfully[/green]")
+                console.print("Waiting for servers to initialize...")
+                time.sleep(5)  # Give servers more time to initialize
+                
+                # Verify servers started
+                tagger_running = self.server_manager.is_tagger_server_running()
+                wsd_running = self.server_manager.is_wsd_server_running()
+                
+                if tagger_running and wsd_running:
+                    console.print("[green]MetaMap servers started successfully[/green]")
+                else:
+                    console.print("[yellow]Warning: Servers may not have started fully[/yellow]")
+                    console.print(f"  Tagger: {'Running' if tagger_running else 'Not Running'}")
+                    console.print(f"  WSD: {'Running' if wsd_running else 'Not Running'}")
             except Exception as e:
                 console.print(f"[red]Failed to start servers: {e}[/red]")
                 return {"status": "failed", "reason": "server_start_failed"}
