@@ -1,14 +1,23 @@
 """Enhanced thread-safe state management for PythonMetaMap"""
+import os
 import json
 import time
+import uuid
+import shutil
 import threading
-import logging
 from pathlib import Path
-from typing import Dict, List, Set, Optional, Any
 from datetime import datetime
-import fcntl
-import os
-import tempfile
+from typing import Dict, List, Optional, Any, Set
+
+# Platform-specific imports
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    # fcntl is not available on Windows
+    HAS_FCNTL = False
+
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +48,23 @@ class AtomicStateManager:
     
     def _acquire_file_lock(self, timeout: float = 5.0) -> Optional[Any]:
         """Acquire file-based lock for cross-process safety"""
+        if not HAS_FCNTL:
+            # On Windows, use a simple lock file existence check
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                try:
+                    # Try to create lock file exclusively
+                    lock_fd = os.open(str(self.lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                    return lock_fd
+                except FileExistsError:
+                    # Lock file exists, wait and retry
+                    time.sleep(0.1)
+                except Exception as e:
+                    logger.error(f"Failed to create lock file: {e}")
+                    return None
+            return None
+        
+        # Unix/Linux with fcntl
         start_time = time.time()
         
         while time.time() - start_time < timeout:
@@ -62,6 +88,17 @@ class AtomicStateManager:
     
     def _release_file_lock(self, lock_fd: Any):
         """Release file-based lock"""
+        if not HAS_FCNTL:
+            # On Windows, just close and remove the lock file
+            try:
+                os.close(lock_fd)
+                if self.lock_file.exists():
+                    self.lock_file.unlink()
+            except:
+                pass
+            return
+        
+        # Unix/Linux with fcntl
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)

@@ -122,7 +122,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Python MetaMap CLI v9.4.2[/dim]"""
+            [dim]Python MetaMap CLI v9.5.5[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1360,13 +1360,79 @@ class UltimateInteractiveNavigator:
                 console.print("\n[green]Thank you for using PythonMetaMap![/green]")
                 
     def quick_process(self):
-        """Quick processing with visual feedback"""
+        """Quick processing for small number of files with unified tracking"""
         self.clear_screen()
         console.print(Panel(
-            "[bold]Quick Process[/bold]\nProcess files with optimized settings",
+            "[bold]Quick Process[/bold]\nProcess a small number of files quickly",
             box=box.DOUBLE,
             style=COLORS['success']
         ))
+        
+        # Use unified tracking system
+        if self.config.get('use_unified_tracking', True):
+            from ..processing.quick_processor import QuickProcessor
+            
+            console.print("\n[cyan]Using unified file tracking system[/cyan]")
+            console.print(f"[dim]Input directory: pymm_data/input/[/dim]")
+            console.print(f"[dim]Output directory: pymm_data/output/[/dim]\n")
+            
+            quick_processor = QuickProcessor(self.config)
+            
+            # Get file count options
+            console.print("[bold]How many files to process?[/bold]")
+            console.print("1. Process 1 file")
+            console.print("2. Process 5 files")
+            console.print("3. Process 10 files")
+            console.print("4. Process custom number")
+            console.print("5. Process all unprocessed files")
+            console.print("0. Cancel")
+            
+            choice = Prompt.ask("Select option", choices=["0", "1", "2", "3", "4", "5"], default="1")
+            
+            if choice == "0":
+                return
+            elif choice == "1":
+                file_count = 1
+            elif choice == "2":
+                file_count = 5
+            elif choice == "3":
+                file_count = 10
+            elif choice == "4":
+                file_count = IntPrompt.ask("Enter number of files", default=1, show_default=True)
+            else:
+                file_count = None  # Process all
+            
+            # Ask about validation
+            run_validation = Confirm.ask("\nRun validation checks?", default=False)
+            
+            # Ask about background for larger batches
+            background = False
+            if file_count is None or file_count > 5:
+                background = Confirm.ask("\nRun in background?", default=False)
+            
+            # Process files
+            result = quick_processor.quick_process_files(
+                file_count=file_count,
+                run_validation=run_validation,
+                background=background
+            )
+            
+            # Handle results
+            if result['status'] == 'completed':
+                console.print(f"\n[green]Successfully processed {result['processed']} files![/green]")
+            elif result['status'] == 'started_background':
+                console.print(f"\n[green]Background processing started for {result['files']} files[/green]")
+                console.print(f"[dim]Job ID: {result.get('job_id', 'unknown')}[/dim]")
+            elif result['status'] == 'no_files':
+                console.print(f"\n[yellow]{result['message']}[/yellow]")
+            else:
+                console.print(f"\n[red]Processing failed: {result.get('message', 'Unknown error')}[/red]")
+            
+            input("\nPress Enter to continue...")
+            return
+            
+        # Fall back to traditional quick processing
+        console.print("\n[yellow]Traditional quick processing (not using unified tracking)[/yellow]")
         
         # Check server
         if not self.server_manager.is_running():
@@ -1827,8 +1893,29 @@ Throughput: {throughput:.2f} files/s"""
             console.print("\n[cyan]Using unified file tracking system[/cyan]")
             console.print("[dim]All files are tracked in: pymm_data/[/dim]\n")
             
+            # Ensure config is properly passed
+            if not isinstance(self.config, PyMMConfig):
+                console.print("[red]Configuration error: Invalid config type[/red]")
+                console.print(f"[dim]Config type: {type(self.config)}[/dim]")
+                input("\nPress Enter to continue...")
+                return
+                
             smart_runner = SmartBatchRunner(self.config)
-            result = smart_runner.run_smart_processing()
+            
+            try:
+                result = smart_runner.run_smart_processing()
+            except AttributeError as e:
+                if "'NoneType' object" in str(e):
+                    console.print("[red]Configuration error: Config method not accessible[/red]")
+                    console.print(f"[dim]Error: {e}[/dim]")
+                    console.print("[yellow]Attempting to reinitialize configuration...[/yellow]")
+                    
+                    # Try to reinitialize config
+                    self.config = PyMMConfig()
+                    smart_runner = SmartBatchRunner(self.config)
+                    result = smart_runner.run_smart_processing()
+                else:
+                    raise
             
             if result['status'] == 'completed':
                 console.print(f"\n[green]Successfully processed {result['processed']} files![/green]")
@@ -2067,14 +2154,27 @@ Throughput: {throughput:.2f} files/s"""
             style=COLORS['secondary']
         ))
         
-        output_dir = Prompt.ask(
-            "\nOutput directory",
-            default=self.config.get('default_output_dir', './output_csvs')
-        )
+        # Check if using unified tracking
+        use_unified = self.config.get('use_unified_tracking', True)
         
-        output_path = Path(output_dir)
+        if use_unified:
+            # Use unified tracking system
+            base_dir = self.config.get('base_data_dir', './pymm_data')
+            output_dir = Prompt.ask(
+                "\nBase data directory",
+                default=base_dir
+            )
+            output_path = Path(output_dir) / 'output'
+        else:
+            # Traditional output directory
+            output_dir = Prompt.ask(
+                "\nOutput directory",
+                default=self.config.get('default_output_dir', './output_csvs')
+            )
+            output_path = Path(output_dir)
+        
         if not output_path.exists():
-            console.print(f"\n[error]Directory not found: {output_dir}[/error]")
+            console.print(f"\n[error]Directory not found: {output_path}[/error]")
             input("\nPress Enter to continue...")
             return
             
@@ -2088,6 +2188,19 @@ Throughput: {throughput:.2f} files/s"""
         # Show summary
         total_concepts = 0
         total_size = 0
+        manifest_data = None
+        
+        # Try to load processing manifest if using unified tracking
+        if use_unified:
+            manifest_path = Path(output_dir) / 'processing_manifest.json'
+            if manifest_path.exists():
+                try:
+                    import json
+                    with open(manifest_path) as f:
+                        manifest_data = json.load(f)
+                    console.print(f"[green]✓ Loaded processing manifest[/green]")
+                except:
+                    pass
         
         with Progress() as progress:
             task = progress.add_task("Analyzing results...", total=len(csv_files))
@@ -2114,6 +2227,13 @@ Throughput: {throughput:.2f} files/s"""
 Total Size: {self._format_size(total_size)}
 Average Size: {self._format_size(total_size // len(csv_files) if csv_files else 0)}"""
         
+        # Add manifest info if available
+        if manifest_data:
+            stats = manifest_data.get('statistics', {})
+            files_content += f"\n\nTracked Files: {len(manifest_data.get('files', {}))}"
+            files_content += f"\nProcessed: {stats.get('total_processed', 0)}"
+            files_content += f"\nFailed: {stats.get('total_failed', 0)}"
+        
         summary_panels.append(Panel(
             files_content,
             title="[bold]Files[/bold]",
@@ -2124,6 +2244,14 @@ Average Size: {self._format_size(total_size // len(csv_files) if csv_files else 
         # Concepts panel
         concepts_content = f"""Total Concepts: {total_concepts:,}
 Average per File: {total_concepts // len(csv_files) if csv_files else 0:,}
+Output Directory: {output_path}"""
+        
+        # Add manifest concept info if available
+        if manifest_data and manifest_data.get('statistics'):
+            manifest_concepts = manifest_data['statistics'].get('total_concepts', 0)
+            if manifest_concepts > 0:
+                concepts_content = f"""Total Concepts: {manifest_concepts:,} (tracked)
+Average per File: {manifest_concepts // len(csv_files) if csv_files else 0:,}
 Output Directory: {output_path}"""
         
         summary_panels.append(Panel(
@@ -3640,27 +3768,13 @@ Output Directory: {output_path}"""
         
         try:
             # Create and start the monitor
-            output_dir = self.config.get('default_output_dir', './output_csvs')
-            monitor = EnhancedMonitor([output_dir], config=self.config)
-            
-            # Add initial log entries
-            monitor.log("INFO", "Monitor", "Monitoring system started")
-            monitor.log("INFO", "System", f"Monitoring output directory: {output_dir}")
+            monitor = EnhancedMonitor(config=self.config)
             
             # Start the monitor
-            monitor.start()
+            monitor.run()
             
-            console.print("\n[yellow]Monitor is running. Press Ctrl+C to stop.[/yellow]")
-            
-            # Keep it running until interrupted
-            try:
-                while True:
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                pass
-            
-            # Stop the monitor
-            monitor.stop()
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Monitor stopped[/yellow]")
             
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")

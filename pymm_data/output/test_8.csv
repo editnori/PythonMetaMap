@@ -1,5 +1,0 @@
-META_BATCH_START_NOTE_ID:test_8.txt
-"CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
-"C0584135","-1000","Referral to endocrinologist","Referral to endocrinologist","Referral to endocrinologist","hlca","SNOMEDCT_US","0:27"
-"C0034866","-1000","Recommended","Recommendation","recommended.","idcn","CHV,HL7V3.0,LNC,MTH,NCI","28:11"
-META_BATCH_END_NOTE_ID:test_8.txt

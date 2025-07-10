@@ -1,7 +1,0 @@
-META_BATCH_START_NOTE_ID:test_1.txt
-"CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
-"C0030705","-1000","*^patient","Patients","Patient","podg","AOD,CHV,HL7V3.0,LCH,LCH_NW,LNC,MSH,MTH,NCI,NCI_CDISC-GLOSS,NCI_DICOM,NCI_FDA,SNOMEDCT_US","0:7"
-"C0150312","-770","PRESENT","Present","presents with chest pain","fndg","CHV,LNC,MTH,NCI,NCI_CDISC,SNMI,SNOMEDCT_US","8:8"
-"C0008031","-833","CHEST PAIN","Chest Pain","presents with chest pain","sosy","CCS,CCSR_10,CHV,COSTAR,CST,DXP,HPO,ICD10CM,ICD9CM,ICF,ICF-CY,LCH,LCH_NW,LNC,MEDLINEPLUS,MSH,MTH,NCI,NCI_FDA,NCI_NCI-GLOSS,NCI_NICHD,NLMSubSyn,OMIM,SNM,SNMI,SNOMEDCT_US","22:10"
-"C2707305","-1000","Shortness of breath","Shortness of breath:-:Point in time:^Patient:-","shortness of breath.","clna","LNC,MTH","37:19"
-META_BATCH_END_NOTE_ID:test_1.txt

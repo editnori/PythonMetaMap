@@ -1,0 +1,33 @@
+{
+  "files": [
+    "pymm_data/input/ADM.IDX.0001.PID.2469101.DATE.2020-06-14.NID.-5937129837482392224.TYPE.44814638.VID.90891050.txt"
+  ],
+  "config": {
+    "metamap_processing_options": "-y",
+    "max_parallel_workers": 8,
+    "pymm_timeout": 120,
+    "java_heap_size": "8g",
+    "retry_max_attempts": 3,
+    "retry_backoff_base": 2,
+    "health_check_interval": 30,
+    "port_wait_timeout": 60,
+    "use_instance_pool": true,
+    "metamap_instance_count": 3,
+    "default_input_dir": "/mnt/c/Users/Layth M Qassem/Desktop/PythonMetaMap/input_notes",
+    "default_output_dir": "/mnt/c/Users/Layth M Qassem/Desktop/PythonMetaMap/output_csvs",
+    "base_data_dir": "./pymm_data",
+    "use_unified_tracking": true,
+    "memory_system": "aggressive",
+    "memory_limit_mb": null,
+    "java_home": "/usr/lib/jvm/java-11-openjdk-amd64",
+    "chunk_size": 500,
+    "metamap_binary_path": "/home/layth888/metamap_install/public_mm/bin/metamap",
+    "server_scripts_dir": "/home/layth888/metamap_install/public_mm/bin",
+    "metamap_home": "/home/layth888/metamap_install/public_mm",
+    "tagger_server_port": 1795,
+    "wsd_server_port": 5554,
+    "relaxed_model": true,
+    "enable_job_tracking": true
+  },
+  "timestamp": "2025-07-10T16:24:18.463522"
+}

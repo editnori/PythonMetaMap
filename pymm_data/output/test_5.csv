@@ -1,5 +1,0 @@
-META_BATCH_START_NOTE_ID:test_5.txt
-"CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
-"C0030705","-1000","*^patient","Patients","Patient","podg","AOD,CHV,HL7V3.0,LCH,LCH_NW,LNC,MSH,MTH,NCI,NCI_CDISC-GLOSS,NCI_DICOM,NCI_FDA,SNOMEDCT_US","0:7"
-"C0011860","-1000","Diabetes mellitus type 2","Diabetes Mellitus, Non-Insulin-Dependent","diabetes mellitus type 2.","dsyn","CCSR_10,CHV,CSP,DXP,HPO,ICD10CM,LCH_NW,LNC,MEDLINEPLUS,MSH,MTH,NCI,NCI_NICHD,NLMSubSyn,OMIM,SNM,SNMI,SNOMEDCT_US","12:24"
-META_BATCH_END_NOTE_ID:test_5.txt

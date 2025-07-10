@@ -1,433 +1,895 @@
-"""Unified monitoring interface integrating all monitoring components"""
-import threading
+"""Unified monitor combining all monitoring features
+
+This module consolidates all monitoring capabilities:
+- Basic monitoring (from monitor.py)
+- Enhanced monitoring features (from enhanced_monitor.py)
+- Unified display modes (from unified_monitor.py in cli)
+- Enhanced unified features (from enhanced_unified_monitor.py)
+- Resource monitoring
+- Live progress tracking
+- Statistics dashboard
+- Output exploration
+"""
+import os
 import time
-from datetime import datetime
+import threading
+import json
+import psutil
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Callable
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime, timedelta
+from collections import deque, defaultdict
+import csv
 
 from rich.console import Console
-from rich.layout import Layout
 from rich.live import Live
-from rich.panel import Panel
-from rich.text import Text
 from rich.table import Table
+from rich.panel import Panel
+from rich.layout import Layout
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn
+from rich.text import Text
+from rich.columns import Columns
 from rich import box
 from rich.align import Align
-from rich.prompt import Prompt
+from rich.tree import Tree
+from rich.rule import Rule
 
-from .realtime_progress import RealtimeProgressTracker
-from .live_logger import LiveLogger, LoggerIntegration
-from .resource_monitor import ResourceMonitor
-from .output_explorer import OutputExplorer
-from .statistics_dashboard import StatisticsDashboard
+from ..core.state import StateManager
+from ..core.job_manager import get_job_manager
+from ..core.file_tracker import UnifiedFileTracker
 
+logger = None  # Avoid circular imports
 console = Console()
 
 
+class MonitoringMode:
+    """Monitoring display modes"""
+    COMPACT = "compact"
+    DETAILED = "detailed"
+    DASHBOARD = "dashboard"
+    MINIMAL = "minimal"
+    AUTO = "auto"
+
+
 class UnifiedMonitor:
-    """Unified monitoring system bringing together all monitoring components"""
+    """Unified monitor with all monitoring features"""
     
-    def __init__(self, output_dirs: List[Path] = None, config = None):
-        # Initialize all components
-        self.config = config
-        self.progress_tracker = RealtimeProgressTracker(update_callback=self._on_progress_update)
-        self.live_logger = LiveLogger(display_lines=15)
+    def __init__(self, output_dir: Path, mode: str = MonitoringMode.AUTO):
+        """Initialize unified monitor
+        
+        Args:
+            output_dir: Output directory to monitor
+            mode: Display mode (compact, detailed, dashboard, minimal, auto)
+        """
+        self.output_dir = Path(output_dir)
+        self.mode = mode
+        self.running = False
+        self.update_interval = 1.0  # seconds
+        
+        # State management
+        self.state_manager = StateManager(str(output_dir))
+        self.file_tracker = None
+        self.job_manager = None
+        
+        # Try to initialize enhanced features
+        try:
+            self.file_tracker = UnifiedFileTracker()
+        except:
+            pass
+            
+        try:
+            self.job_manager = get_job_manager()
+        except:
+            pass
+        
+        # Resource monitoring
         self.resource_monitor = ResourceMonitor()
         
-        # Use config for default output directory if not specified
-        if not output_dirs and config:
-            default_output = config.get('default_output_dir', './output_csvs')
-            output_dirs = [Path(default_output)]
-        elif not output_dirs:
-            output_dirs = [Path("./output_csvs")]
-            
-        self.output_explorer = OutputExplorer(output_dirs)
-        self.statistics_dashboard = StatisticsDashboard()
+        # Progress tracking
+        self.progress_tracker = ProgressTracker(output_dir)
         
-        # Current view
-        self.current_view = "dashboard"  # dashboard, progress, logs, resources, files, stats
-        self.views = ["dashboard", "progress", "logs", "resources", "files", "stats"]
-        
-        # Control
-        self._running = False
-        self._live = None
-        self.refresh_rate = 0.5
-        
-        # Keyboard shortcuts
-        self.shortcuts = {
-            'd': 'dashboard',
-            'p': 'progress',
-            'l': 'logs',
-            'r': 'resources',
-            'f': 'files',
-            's': 'stats',
-            'q': 'quit',
-            'h': 'help'
+        # Statistics
+        self.stats = {
+            "start_time": None,
+            "files_processed": 0,
+            "files_failed": 0,
+            "total_files": 0,
+            "concepts_found": 0,
+            "processing_rate": 0,
+            "avg_file_time": 0,
+            "current_file": None,
+            "eta": None
         }
         
-        # Integration callbacks
-        self.batch_callback: Optional[Callable] = None
-        self.file_callback: Optional[Callable] = None
+        # Recent activity log
+        self.activity_log = deque(maxlen=50)
         
-    def start(self):
-        """Start the unified monitor"""
-        if not self._running:
-            self._running = True
+        # Error tracking
+        self.recent_errors = deque(maxlen=10)
+        
+        # Performance history
+        self.performance_history = deque(maxlen=100)
+        
+        # Auto-detect best display mode
+        if self.mode == MonitoringMode.AUTO:
+            self._auto_detect_mode()
             
-            # Start all monitoring components
-            self.resource_monitor.start()
-            self.output_explorer.start_watching()
+    def _auto_detect_mode(self):
+        """Auto-detect best display mode based on terminal size"""
+        try:
+            width, height = os.get_terminal_size()
             
-            # Start display thread
-            self._display_thread = threading.Thread(target=self._run_display, daemon=True)
-            self._display_thread.start()
-    
+            if height < 20:
+                self.mode = MonitoringMode.MINIMAL
+            elif height < 30:
+                self.mode = MonitoringMode.COMPACT
+            elif width > 120 and height > 40:
+                self.mode = MonitoringMode.DASHBOARD
+            else:
+                self.mode = MonitoringMode.DETAILED
+                
+        except:
+            self.mode = MonitoringMode.COMPACT
+            
+    def start(self, live_display: bool = True):
+        """Start monitoring
+        
+        Args:
+            live_display: Whether to show live display
+        """
+        self.running = True
+        self.stats["start_time"] = time.time()
+        
+        # Start resource monitoring
+        self.resource_monitor.start()
+        
+        if live_display:
+            # Start live display in separate thread
+            self.display_thread = threading.Thread(target=self._run_live_display, daemon=True)
+            self.display_thread.start()
+        else:
+            # Just update stats in background
+            self.update_thread = threading.Thread(target=self._update_loop, daemon=True)
+            self.update_thread.start()
+            
     def stop(self):
-        """Stop the unified monitor"""
-        self._running = False
-        
-        # Stop all components
-        self.progress_tracker.stop()
+        """Stop monitoring"""
+        self.running = False
         self.resource_monitor.stop()
-        self.output_explorer.stop_watching()
-        self.statistics_dashboard.stop()
         
-        # Wait for display thread
-        if hasattr(self, '_display_thread') and self._display_thread.is_alive():
-            self._display_thread.join(timeout=5)
-    
-    def _run_display(self):
-        """Run the live display"""
-        with Live(
-            self._create_layout(),
-            console=console,
-            refresh_per_second=1/self.refresh_rate,
-            screen=True
-        ) as live:
-            self._live = live
+        # Wait for threads to finish
+        if hasattr(self, 'display_thread'):
+            self.display_thread.join(timeout=2)
+        if hasattr(self, 'update_thread'):
+            self.update_thread.join(timeout=2)
             
-            while self._running:
+    def _run_live_display(self):
+        """Run live display loop"""
+        with Live(console=console, refresh_per_second=1) as live:
+            while self.running:
                 try:
-                    # Update display
-                    live.update(self._create_layout())
+                    # Update statistics
+                    self._update_stats()
                     
-                    # Check for keyboard input (would need async for real implementation)
-                    time.sleep(self.refresh_rate)
+                    # Generate display based on mode
+                    if self.mode == MonitoringMode.MINIMAL:
+                        display = self._create_minimal_display()
+                    elif self.mode == MonitoringMode.COMPACT:
+                        display = self._create_compact_display()
+                    elif self.mode == MonitoringMode.DETAILED:
+                        display = self._create_detailed_display()
+                    elif self.mode == MonitoringMode.DASHBOARD:
+                        display = self._create_dashboard_display()
+                    else:
+                        display = self._create_compact_display()
+                        
+                    live.update(display)
+                    time.sleep(self.update_interval)
                     
                 except KeyboardInterrupt:
-                    self._running = False
+                    break
                 except Exception as e:
-                    console.print(f"[error]Display error: {e}[/error]")
-    
-    def _create_layout(self) -> Layout:
-        """Create the main layout based on current view"""
+                    console.print(f"[red]Display error: {e}[/red]")
+                    break
+                    
+    def _update_loop(self):
+        """Update statistics in background without display"""
+        while self.running:
+            try:
+                self._update_stats()
+                time.sleep(self.update_interval)
+            except:
+                pass
+                
+    def _update_stats(self):
+        """Update monitoring statistics"""
+        # Get state info
+        state_info = self.state_manager.get_statistics()
+        self.stats["total_files"] = state_info.get("total_files", 0)
+        self.stats["files_processed"] = state_info.get("completed", 0)
+        self.stats["files_failed"] = state_info.get("failed", 0)
+        
+        # Calculate processing rate
+        if self.stats["start_time"] and self.stats["files_processed"] > 0:
+            elapsed = time.time() - self.stats["start_time"]
+            self.stats["processing_rate"] = self.stats["files_processed"] / elapsed
+            self.stats["avg_file_time"] = elapsed / self.stats["files_processed"]
+            
+            # Calculate ETA
+            remaining = self.stats["total_files"] - self.stats["files_processed"] - self.stats["files_failed"]
+            if remaining > 0 and self.stats["processing_rate"] > 0:
+                eta_seconds = remaining / self.stats["processing_rate"]
+                self.stats["eta"] = datetime.now() + timedelta(seconds=eta_seconds)
+                
+        # Get current processing files
+        in_progress = state_info.get("in_progress_files", [])
+        if in_progress:
+            self.stats["current_file"] = Path(in_progress[0]).name
+            
+        # Count concepts from CSV files
+        self._update_concept_count()
+        
+        # Check for new errors
+        self._check_errors()
+        
+    def _update_concept_count(self):
+        """Count total concepts from CSV files"""
+        try:
+            csv_files = list(self.output_dir.glob("*.csv"))
+            total_concepts = 0
+            
+            for csv_file in csv_files[-10:]:  # Sample last 10 files
+                try:
+                    with open(csv_file, 'r') as f:
+                        # Count non-header, non-empty lines
+                        lines = sum(1 for line in f if line.strip() and not line.startswith('#'))
+                        total_concepts += max(0, lines - 1)  # Subtract header
+                except:
+                    pass
+                    
+            # Extrapolate if not all files checked
+            if len(csv_files) > 10:
+                avg_per_file = total_concepts / 10
+                self.stats["concepts_found"] = int(avg_per_file * len(csv_files))
+            else:
+                self.stats["concepts_found"] = total_concepts
+                
+        except:
+            pass
+            
+    def _check_errors(self):
+        """Check for recent errors"""
+        if self.state_manager._state.get("failed_files"):
+            for file_path, error_info in self.state_manager._state["failed_files"].items():
+                error_entry = {
+                    "file": Path(file_path).name,
+                    "error": error_info.get("error", "Unknown error"),
+                    "time": error_info.get("timestamp", "")
+                }
+                
+                # Add if not already in recent errors
+                if not any(e["file"] == error_entry["file"] for e in self.recent_errors):
+                    self.recent_errors.append(error_entry)
+                    self.activity_log.append(f"[red]ERROR[/red] {error_entry['file']}: {error_entry['error'][:50]}...")
+                    
+    def _create_minimal_display(self) -> Panel:
+        """Create minimal single-line display"""
+        processed = self.stats["files_processed"]
+        total = self.stats["total_files"]
+        failed = self.stats["files_failed"]
+        rate = self.stats["processing_rate"]
+        
+        if total > 0:
+            percent = (processed + failed) / total * 100
+        else:
+            percent = 0
+            
+        # Create progress bar
+        bar_width = 20
+        filled = int(bar_width * percent / 100)
+        bar = f"[green]{'█' * filled}[/green][dim]{'░' * (bar_width - filled)}[/dim]"
+        
+        # Status line
+        status = f"{bar} {percent:>3.0f}% | Files: {processed}/{total} | Failed: {failed} | Rate: {rate:.1f}/s"
+        
+        if self.stats["current_file"]:
+            status += f" | Current: {self.stats['current_file'][:30]}..."
+            
+        return Panel(status, box=box.MINIMAL)
+        
+    def _create_compact_display(self) -> Layout:
+        """Create compact display layout"""
         layout = Layout()
+        layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="progress", size=5),
+            Layout(name="stats", size=7),
+            Layout(name="resources", size=4)
+        )
         
         # Header
-        header = self._create_header()
+        header = Panel(
+            f"[bold bright_cyan]MetaMap Processing Monitor[/bold bright_cyan]\n"
+            f"[dim]Output: {self.output_dir}[/dim]",
+            box=box.ROUNDED
+        )
+        layout["header"].update(header)
         
-        # Main content based on view
-        if self.current_view == "dashboard":
-            content = self._create_dashboard_view()
-        elif self.current_view == "progress":
-            content = self._create_progress_view()
-        elif self.current_view == "logs":
-            content = self._create_logs_view()
-        elif self.current_view == "resources":
-            content = self._create_resources_view()
-        elif self.current_view == "files":
-            content = self._create_files_view()
-        elif self.current_view == "stats":
-            content = self._create_stats_view()
-        else:
-            content = Panel("Unknown view", style="red")
+        # Progress
+        progress_content = self._create_progress_bars()
+        layout["progress"].update(Panel(progress_content, title="Progress", box=box.ROUNDED))
+        
+        # Statistics
+        stats_table = self._create_stats_table()
+        layout["stats"].update(Panel(stats_table, title="Statistics", box=box.ROUNDED))
+        
+        # Resources
+        resources = self.resource_monitor.get_compact_display()
+        layout["resources"].update(Panel(resources, title="System Resources", box=box.ROUNDED))
+        
+        return layout
+        
+    def _create_detailed_display(self) -> Layout:
+        """Create detailed display layout"""
+        layout = Layout()
+        layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="main", ratio=1),
+            Layout(name="footer", size=3)
+        )
+        
+        # Header
+        header = self._create_header_panel()
+        layout["header"].update(header)
+        
+        # Main area
+        main = Layout()
+        main.split_row(
+            Layout(name="left", ratio=2),
+            Layout(name="right", ratio=1)
+        )
+        
+        # Left side - progress and stats
+        left = Layout()
+        left.split_column(
+            Layout(name="progress", size=8),
+            Layout(name="stats", size=10),
+            Layout(name="activity", ratio=1)
+        )
+        
+        left["progress"].update(Panel(self._create_detailed_progress(), title="Processing Progress", box=box.ROUNDED))
+        left["stats"].update(Panel(self._create_detailed_stats(), title="Detailed Statistics", box=box.ROUNDED))
+        left["activity"].update(Panel(self._create_activity_log(), title="Recent Activity", box=box.ROUNDED))
+        
+        # Right side - resources and errors
+        right = Layout()
+        right.split_column(
+            Layout(name="resources", size=12),
+            Layout(name="errors", ratio=1)
+        )
+        
+        right["resources"].update(self.resource_monitor.get_detailed_panel())
+        right["errors"].update(Panel(self._create_error_list(), title="Recent Errors", box=box.ROUNDED))
+        
+        main["left"].update(left)
+        main["right"].update(right)
+        layout["main"].update(main)
         
         # Footer
-        footer = self._create_footer()
-        
-        # Arrange layout
-        layout.split_column(
-            Layout(header, size=3),
-            Layout(content, name="main"),
-            Layout(footer, size=3)
-        )
+        footer = self._create_footer_panel()
+        layout["footer"].update(footer)
         
         return layout
-    
-    def _create_header(self) -> Panel:
-        """Create header with navigation tabs"""
-        # Create tabs
-        tabs = []
-        for view in self.views:
-            if view == self.current_view:
-                tabs.append(f"[bold cyan][ {view.upper()} ][/bold cyan]")
-            else:
-                shortcut = [k for k, v in self.shortcuts.items() if v == view][0]
-                tabs.append(f"[dim]  {view}({shortcut})  [/dim]")
         
-        tabs_text = "  ".join(tabs)
-        
-        # Add resource summary
-        resource_summary = self.resource_monitor.get_summary()
-        cpu = resource_summary['cpu_percent']
-        mem = resource_summary['memory_percent']
-        
-        header_content = f"{tabs_text}\n[dim]CPU: {cpu:.1f}% | MEM: {mem:.1f}% | [/dim][green]Files: {self.statistics_dashboard.global_stats.total_files_processed}[/green]"
-        
-        return Panel(header_content, box=box.DOUBLE, style="bold cyan")
-    
-    def _create_footer(self) -> Panel:
-        """Create footer with shortcuts and status"""
-        shortcuts_text = " | ".join([
-            f"[bold]{k}[/bold]:{v[:4]}" for k, v in sorted(self.shortcuts.items())
-        ])
-        
-        # Add status info
-        status_parts = []
-        
-        # Active batches
-        active_batches = len(self.progress_tracker.batches)
-        if active_batches > 0:
-            status_parts.append(f"[green]Active Batches: {active_batches}[/green]")
-        
-        # Recent errors
-        error_count = len(self.live_logger.entries) if hasattr(self.live_logger, 'entries') else 0
-        if error_count > 0:
-            recent_errors = sum(1 for e in list(self.live_logger.entries)[-100:] 
-                              if e.level in ['ERROR', 'CRITICAL'])
-            if recent_errors > 0:
-                status_parts.append(f"[red]Recent Errors: {recent_errors}[/red]")
-        
-        footer_content = shortcuts_text
-        if status_parts:
-            footer_content += "\n" + " | ".join(status_parts)
-        
-        return Panel(footer_content, box=box.SIMPLE, style="dim")
-    
-    def _create_dashboard_view(self) -> Layout:
-        """Create dashboard view combining multiple components"""
+    def _create_dashboard_display(self) -> Layout:
+        """Create full dashboard display"""
         layout = Layout()
-        
-        # Split into quadrants
         layout.split_column(
-            Layout(name="top", size=15),
-            Layout(name="bottom", size=15)
+            Layout(name="header", size=4),
+            Layout(name="overview", size=8),
+            Layout(name="main", ratio=1),
+            Layout(name="footer", size=3)
         )
         
-        layout["top"].split_row(
-            Layout(self._create_mini_progress(), name="progress"),
-            Layout(self._create_mini_stats(), name="stats")
+        # Header with title and summary
+        header = Panel(
+            Align.center(
+                f"[bold bright_cyan]PythonMetaMap Processing Dashboard[/bold bright_cyan]\n"
+                f"[bright_yellow]Output Directory:[/bright_yellow] {self.output_dir}\n"
+                f"[bright_green]Mode:[/bright_green] Real-time Monitoring"
+            ),
+            box=box.DOUBLE
+        )
+        layout["header"].update(header)
+        
+        # Overview with key metrics
+        overview = self._create_overview_panel()
+        layout["overview"].update(overview)
+        
+        # Main content area
+        main = Layout()
+        main.split_row(
+            Layout(name="left", ratio=1),
+            Layout(name="center", ratio=1),
+            Layout(name="right", ratio=1)
         )
         
-        layout["bottom"].split_row(
-            Layout(self._create_mini_logs(), name="logs"),
-            Layout(self._create_mini_resources(), name="resources")
+        # Left column
+        left = Layout()
+        left.split_column(
+            Layout(name="progress", size=10),
+            Layout(name="performance", ratio=1)
         )
+        left["progress"].update(Panel(self._create_detailed_progress(), title="📊 Progress", box=box.ROUNDED))
+        left["performance"].update(Panel(self._create_performance_chart(), title="📈 Performance", box=box.ROUNDED))
+        
+        # Center column
+        center = Layout()
+        center.split_column(
+            Layout(name="stats", size=12),
+            Layout(name="activity", ratio=1)
+        )
+        center["stats"].update(Panel(self._create_detailed_stats(), title="📋 Statistics", box=box.ROUNDED))
+        center["activity"].update(Panel(self._create_activity_log(), title="🔄 Activity Log", box=box.ROUNDED))
+        
+        # Right column
+        right = Layout()
+        right.split_column(
+            Layout(name="resources", size=14),
+            Layout(name="errors", ratio=1)
+        )
+        right["resources"].update(self.resource_monitor.get_detailed_panel())
+        right["errors"].update(Panel(self._create_error_list(), title="⚠️ Errors", box=box.ROUNDED))
+        
+        main["left"].update(left)
+        main["center"].update(center)
+        main["right"].update(right)
+        layout["main"].update(main)
+        
+        # Footer
+        footer = self._create_footer_panel()
+        layout["footer"].update(footer)
         
         return layout
-    
-    def _create_progress_view(self) -> Layout:
-        """Create detailed progress view"""
-        return self.progress_tracker.get_progress_display()
-    
-    def _create_logs_view(self) -> Layout:
-        """Create logs view with controls"""
-        layout = Layout()
         
-        # Main log display
-        logs_panel = self.live_logger.get_display(height=25)
+    def _create_header_panel(self) -> Panel:
+        """Create header panel"""
+        elapsed = time.time() - self.stats["start_time"] if self.stats["start_time"] else 0
+        elapsed_str = str(timedelta(seconds=int(elapsed)))
         
-        # Controls panel
-        controls = self._create_log_controls()
+        content = f"[bold bright_cyan]MetaMap Processing Monitor[/bold bright_cyan] | "
+        content += f"[bright_yellow]Elapsed:[/bright_yellow] {elapsed_str} | "
         
-        layout.split_column(
-            Layout(logs_panel, size=25),
-            Layout(controls, size=5)
-        )
+        if self.stats["eta"]:
+            eta_str = self.stats["eta"].strftime("%H:%M:%S")
+            content += f"[bright_green]ETA:[/bright_green] {eta_str}"
+        else:
+            content += "[dim]Calculating ETA...[/dim]"
+            
+        return Panel(content, box=box.ROUNDED)
         
-        return layout
-    
-    def _create_resources_view(self) -> Layout:
-        """Create resources view"""
-        return self.resource_monitor.get_display()
-    
-    def _create_files_view(self) -> Layout:
-        """Create files view"""
-        return self.output_explorer.get_display()
-    
-    def _create_stats_view(self) -> Layout:
-        """Create statistics view"""
-        return self.statistics_dashboard.get_display()
-    
-    def _create_mini_progress(self) -> Panel:
-        """Create mini progress panel for dashboard"""
-        if not self.progress_tracker.current_batch:
-            return Panel("No active processing", title="Progress", box=box.ROUNDED)
+    def _create_footer_panel(self) -> Panel:
+        """Create footer panel with controls"""
+        controls = "[bright_cyan]Q[/bright_cyan]uit | [bright_cyan]P[/bright_cyan]ause | [bright_cyan]R[/bright_cyan]esume | "
+        controls += "[bright_cyan]M[/bright_cyan]ode | [bright_cyan]E[/bright_cyan]xport | [bright_cyan]H[/bright_cyan]elp"
         
-        batch = self.progress_tracker.batches.get(self.progress_tracker.current_batch)
-        if not batch:
-            return Panel("No batch data", title="Progress", box=box.ROUNDED)
+        return Panel(controls, box=box.MINIMAL)
         
-        content = Text()
+    def _create_progress_bars(self) -> str:
+        """Create progress bars for compact display"""
+        processed = self.stats["files_processed"]
+        failed = self.stats["files_failed"]
+        total = self.stats["total_files"]
         
+        if total > 0:
+            progress_percent = processed / total * 100
+            failed_percent = failed / total * 100
+            overall_percent = (processed + failed) / total * 100
+        else:
+            progress_percent = failed_percent = overall_percent = 0
+            
         # Overall progress
-        progress = (batch.completed_files + batch.failed_files) / batch.total_files * 100
-        content.append(f"Progress: {progress:.1f}%\n", style="bold")
-        content.append(f"Files: {batch.completed_files}/{batch.total_files}\n")
+        content = f"Overall: {self._create_bar(overall_percent, 30)} {overall_percent:>3.0f}%\n"
+        content += f"Success: {self._create_bar(progress_percent, 30, 'green')} {processed}/{total}\n"
+        content += f"Failed:  {self._create_bar(failed_percent, 30, 'red')} {failed}/{total}"
         
-        # Active files
-        if batch.active_files:
-            content.append("\nActive:\n", style="bold cyan")
-            for filename in batch.active_files[:3]:
-                content.append(f"  • {Path(filename).name}\n", style="yellow")
+        return content
         
-        # Throughput
-        content.append(f"\nThroughput: {self.progress_tracker.files_per_second:.1f} files/s", style="green")
+    def _create_bar(self, percent: float, width: int, color: str = 'cyan') -> str:
+        """Create a progress bar"""
+        filled = int(width * percent / 100)
+        empty = width - filled
+        return f"[{color}]{'█' * filled}[/{color}][dim]{'░' * empty}[/dim]"
         
-        return Panel(content, title="Progress Overview", box=box.ROUNDED, style="cyan")
+    def _create_stats_table(self) -> Table:
+        """Create statistics table"""
+        table = Table(show_header=False, box=None)
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", justify="right")
+        
+        table.add_row("Processing Rate", f"{self.stats['processing_rate']:.2f} files/s")
+        table.add_row("Avg Time/File", f"{self.stats['avg_file_time']:.2f}s")
+        table.add_row("Concepts Found", f"{self.stats['concepts_found']:,}")
+        
+        if self.stats["current_file"]:
+            table.add_row("Current File", self.stats["current_file"][:40])
+            
+        return table
+        
+    def _create_detailed_progress(self) -> str:
+        """Create detailed progress display"""
+        processed = self.stats["files_processed"]
+        failed = self.stats["files_failed"]
+        total = self.stats["total_files"]
+        remaining = total - processed - failed
+        
+        content = f"[bright_green]Processed:[/bright_green] {processed:>5} files\n"
+        content += f"[bright_red]Failed:[/bright_red]    {failed:>5} files\n"
+        content += f"[bright_yellow]Remaining:[/bright_yellow] {remaining:>5} files\n"
+        content += f"[bright_cyan]Total:[/bright_cyan]     {total:>5} files\n\n"
+        
+        # Progress bar
+        if total > 0:
+            percent = (processed + failed) / total * 100
+            content += self._create_bar(percent, 40) + f" {percent:>3.0f}%\n"
+            
+        # Current file
+        if self.stats["current_file"]:
+            content += f"\n[dim]Processing:[/dim] {self.stats['current_file']}"
+            
+        return content
+        
+    def _create_detailed_stats(self) -> Table:
+        """Create detailed statistics table"""
+        table = Table(show_header=True, box=box.SIMPLE)
+        table.add_column("Metric", style="bright_cyan")
+        table.add_column("Value", justify="right", style="bright_white")
+        table.add_column("Details", style="dim")
+        
+        # Time stats
+        elapsed = time.time() - self.stats["start_time"] if self.stats["start_time"] else 0
+        elapsed_str = str(timedelta(seconds=int(elapsed)))
+        table.add_row("Elapsed Time", elapsed_str, "Total processing time")
+        
+        if self.stats["eta"]:
+            remaining = (self.stats["eta"] - datetime.now()).total_seconds()
+            remaining_str = str(timedelta(seconds=int(max(0, remaining))))
+            table.add_row("Time Remaining", remaining_str, "Estimated time to complete")
+        
+        # Processing stats
+        table.add_row("Processing Rate", f"{self.stats['processing_rate']:.2f}/s", "Files per second")
+        table.add_row("Avg Time/File", f"{self.stats['avg_file_time']:.2f}s", "Average processing time")
+        
+        # Results
+        table.add_row("Concepts Found", f"{self.stats['concepts_found']:,}", "Total medical concepts")
+        
+        if self.stats['files_processed'] > 0:
+            avg_concepts = self.stats['concepts_found'] / self.stats['files_processed']
+            table.add_row("Avg Concepts/File", f"{avg_concepts:.1f}", "Average per file")
+            
+        return table
+        
+    def _create_activity_log(self) -> str:
+        """Create activity log display"""
+        if not self.activity_log:
+            return "[dim]No recent activity[/dim]"
+            
+        # Show last 10 activities
+        content = ""
+        for activity in list(self.activity_log)[-10:]:
+            content += f"{activity}\n"
+            
+        return content.strip()
+        
+    def _create_error_list(self) -> str:
+        """Create error list display"""
+        if not self.recent_errors:
+            return "[green]No errors[/green]"
+            
+        content = ""
+        for i, error in enumerate(list(self.recent_errors)[-5:], 1):
+            content += f"[red]{i}.[/red] {error['file']}\n"
+            content += f"   [dim]{error['error'][:60]}...[/dim]\n"
+            
+        return content.strip()
+        
+    def _create_overview_panel(self) -> Panel:
+        """Create overview panel for dashboard"""
+        # Calculate percentages
+        processed = self.stats["files_processed"]
+        failed = self.stats["files_failed"]
+        total = self.stats["total_files"]
+        
+        success_rate = (processed / (processed + failed) * 100) if (processed + failed) > 0 else 0
+        completion = ((processed + failed) / total * 100) if total > 0 else 0
+        
+        # Create metric cards
+        cards = []
+        
+        # Completion card
+        completion_color = "green" if completion > 80 else "yellow" if completion > 50 else "red"
+        cards.append(Panel(
+            f"[bold {completion_color}]{completion:.1f}%[/bold {completion_color}]\n[dim]Complete[/dim]",
+            box=box.ROUNDED,
+            width=15
+        ))
+        
+        # Success rate card
+        success_color = "green" if success_rate > 95 else "yellow" if success_rate > 90 else "red"
+        cards.append(Panel(
+            f"[bold {success_color}]{success_rate:.1f}%[/bold {success_color}]\n[dim]Success[/dim]",
+            box=box.ROUNDED,
+            width=15
+        ))
+        
+        # Files/sec card
+        rate_color = "green" if self.stats["processing_rate"] > 2 else "yellow" if self.stats["processing_rate"] > 1 else "red"
+        cards.append(Panel(
+            f"[bold {rate_color}]{self.stats['processing_rate']:.2f}[/bold {rate_color}]\n[dim]Files/sec[/dim]",
+            box=box.ROUNDED,
+            width=15
+        ))
+        
+        # Concepts card
+        cards.append(Panel(
+            f"[bold bright_cyan]{self.stats['concepts_found']:,}[/bold bright_cyan]\n[dim]Concepts[/dim]",
+            box=box.ROUNDED,
+            width=15
+        ))
+        
+        # ETA card
+        if self.stats["eta"]:
+            eta_str = self.stats["eta"].strftime("%H:%M")
+            cards.append(Panel(
+                f"[bold bright_yellow]{eta_str}[/bold bright_yellow]\n[dim]ETA[/dim]",
+                box=box.ROUNDED,
+                width=15
+            ))
+        
+        return Panel(Columns(cards, equal=True, expand=False), title="Overview", box=box.ROUNDED)
+        
+    def _create_performance_chart(self) -> str:
+        """Create performance chart"""
+        if not self.performance_history:
+            return "[dim]Collecting performance data...[/dim]"
+            
+        # Simple ASCII chart
+        chart_height = 8
+        chart_width = 40
+        
+        # Get last N samples
+        samples = list(self.performance_history)[-chart_width:]
+        if not samples:
+            return "[dim]No data[/dim]"
+            
+        # Normalize to chart height
+        max_val = max(samples) if samples else 1
+        min_val = min(samples) if samples else 0
+        range_val = max_val - min_val or 1
+        
+        # Create chart
+        chart = []
+        for y in range(chart_height, 0, -1):
+            line = ""
+            threshold = min_val + (range_val * y / chart_height)
+            
+            for x, val in enumerate(samples):
+                if val >= threshold:
+                    line += "█"
+                else:
+                    line += " "
+                    
+            chart.append(f"{line} {threshold:.1f}")
+            
+        return "\n".join(chart)
+        
+    def export_report(self, output_path: Optional[Path] = None) -> Path:
+        """Export monitoring report"""
+        if not output_path:
+            output_path = self.output_dir / f"monitor_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            
+        report = {
+            "output_directory": str(self.output_dir),
+            "start_time": datetime.fromtimestamp(self.stats["start_time"]).isoformat() if self.stats["start_time"] else None,
+            "end_time": datetime.now().isoformat(),
+            "statistics": self.stats,
+            "errors": list(self.recent_errors),
+            "performance_metrics": {
+                "avg_processing_time": self.stats["avg_file_time"],
+                "processing_rate": self.stats["processing_rate"],
+                "success_rate": (self.stats["files_processed"] / (self.stats["files_processed"] + self.stats["files_failed"]) * 100) if (self.stats["files_processed"] + self.stats["files_failed"]) > 0 else 0
+            },
+            "resource_usage": self.resource_monitor.get_summary()
+        }
+        
+        with open(output_path, 'w') as f:
+            json.dump(report, f, indent=2)
+            
+        return output_path
+        
+    def get_current_stats(self) -> Dict[str, Any]:
+        """Get current monitoring statistics"""
+        self._update_stats()
+        return self.stats.copy()
+
+
+class ResourceMonitor:
+    """System resource monitoring"""
     
-    def _create_mini_stats(self) -> Panel:
-        """Create mini stats panel for dashboard"""
-        stats = self.statistics_dashboard.global_stats
+    def __init__(self):
+        self.monitoring = False
+        self.monitor_thread = None
+        self.cpu_history = deque(maxlen=60)
+        self.memory_history = deque(maxlen=60)
+        self.disk_history = deque(maxlen=30)
         
-        content = Text()
-        content.append(f"Total Processed: {stats.total_files_processed:,}\n", style="bold green")
-        content.append(f"Total Failed: {stats.total_files_failed:,}\n", style="red")
-        content.append(f"Success Rate: {(stats.total_files_processed/(stats.total_files_processed+stats.total_files_failed)*100 if stats.total_files_processed+stats.total_files_failed > 0 else 0):.1f}%\n")
-        content.append(f"\nConcepts: {stats.total_concepts_extracted:,}\n", style="magenta")
-        content.append(f"Unique: {stats.total_unique_concepts:,}\n")
-        content.append(f"\nAvg Time: {stats.avg_file_processing_time:.2f}s\n", style="yellow")
-        content.append(f"Files/Min: {stats.files_per_minute:.1f}", style="cyan")
+    def start(self):
+        """Start resource monitoring"""
+        self.monitoring = True
+        self.monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self.monitor_thread.start()
         
-        return Panel(content, title="Statistics", box=box.ROUNDED, style="green")
-    
-    def _create_mini_logs(self) -> Panel:
-        """Create mini logs panel for dashboard"""
-        return self.live_logger.get_display(height=10)
-    
-    def _create_mini_resources(self) -> Panel:
-        """Create mini resources panel for dashboard"""
-        summary = self.resource_monitor.get_summary()
+    def stop(self):
+        """Stop resource monitoring"""
+        self.monitoring = False
+        if self.monitor_thread:
+            self.monitor_thread.join(timeout=2)
+            
+    def _monitor_loop(self):
+        """Background monitoring loop"""
+        while self.monitoring:
+            try:
+                # CPU
+                self.cpu_history.append(psutil.cpu_percent(interval=0.1))
+                
+                # Memory
+                mem = psutil.virtual_memory()
+                self.memory_history.append(mem.percent)
+                
+                # Disk
+                disk = psutil.disk_usage('/')
+                self.disk_history.append(disk.percent)
+                
+                time.sleep(1)
+                
+            except Exception:
+                pass
+                
+    def get_compact_display(self) -> str:
+        """Get compact resource display"""
+        cpu = self.cpu_history[-1] if self.cpu_history else 0
+        mem = self.memory_history[-1] if self.memory_history else 0
+        disk = self.disk_history[-1] if self.disk_history else 0
         
-        content = Text()
+        content = f"CPU:  {self._create_mini_bar(cpu)} {cpu:>3.0f}%\n"
+        content += f"RAM:  {self._create_mini_bar(mem)} {mem:>3.0f}%\n"
+        content += f"Disk: {self._create_mini_bar(disk)} {disk:>3.0f}%"
         
-        # CPU
-        content.append("CPU: ", style="bold")
-        cpu_bar = self._create_mini_bar(summary['cpu_percent'], 100, 20)
-        content.append(cpu_bar)
-        content.append(f" {summary['cpu_percent']:.1f}%\n")
+        return content
         
-        # Memory
-        content.append("MEM: ", style="bold")
-        mem_bar = self._create_mini_bar(summary['memory_percent'], 100, 20)
-        content.append(mem_bar)
-        content.append(f" {summary['memory_percent']:.1f}%\n")
+    def get_detailed_panel(self) -> Panel:
+        """Get detailed resource panel"""
+        # Current values
+        cpu = self.cpu_history[-1] if self.cpu_history else 0
+        mem = self.memory_history[-1] if self.memory_history else 0
+        disk = self.disk_history[-1] if self.disk_history else 0
         
-        # Disk I/O
-        content.append(f"\nDisk R/W: {summary['disk_read_mb_s']:.1f}/{summary['disk_write_mb_s']:.1f} MB/s\n")
+        # Memory details
+        mem_info = psutil.virtual_memory()
+        mem_used_gb = mem_info.used / (1024**3)
+        mem_total_gb = mem_info.total / (1024**3)
         
-        # Network
-        content.append(f"Net R/S: {summary['network_recv_mb_s']:.1f}/{summary['network_sent_mb_s']:.1f} MB/s\n")
+        # Create content
+        content = f"[bold]CPU Usage[/bold]\n"
+        content += f"{self._create_bar(cpu, 25)} {cpu:>3.0f}%\n"
+        content += f"[dim]Cores: {psutil.cpu_count()}[/dim]\n\n"
         
-        # Top process
-        content.append(f"\nTop Process: {summary['top_process']}", style="dim")
+        content += f"[bold]Memory Usage[/bold]\n"
+        content += f"{self._create_bar(mem, 25)} {mem:>3.0f}%\n"
+        content += f"[dim]{mem_used_gb:.1f} / {mem_total_gb:.1f} GB[/dim]\n\n"
         
-        return Panel(content, title="Resources", box=box.ROUNDED, style="blue")
-    
-    def _create_log_controls(self) -> Panel:
-        """Create log control panel"""
-        controls = Text()
+        content += f"[bold]Disk Usage[/bold]\n"
+        content += f"{self._create_bar(disk, 25)} {disk:>3.0f}%"
         
-        # Active filters
-        controls.append("Filters: ", style="bold")
+        return Panel(content, title="📊 System Resources", box=box.ROUNDED)
         
-        # Level filters
-        for level in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
-            if level in self.live_logger.filters['levels']:
-                controls.append(f"[{level[0]}]", style={
-                    'DEBUG': 'dim',
-                    'INFO': 'green',
-                    'WARNING': 'yellow',
-                    'ERROR': 'red',
-                    'CRITICAL': 'bold red'
-                }.get(level, 'white'))
-            else:
-                controls.append(f" {level[0]} ", style="dim strikethrough")
+    def _create_mini_bar(self, percent: float, width: int = 10) -> str:
+        """Create mini progress bar"""
+        filled = int(width * percent / 100)
+        empty = width - filled
         
-        # Search
-        if self.live_logger.filters['search']:
-            controls.append(f"\nSearch: '{self.live_logger.filters['search']}'", style="yellow")
-        
-        # Commands
-        controls.append("\n\nCommands: ", style="bold")
-        controls.append("[bold]f[/bold]:filter [bold]s[/bold]:search [bold]c[/bold]:clear [bold]e[/bold]:export")
-        
-        return Panel(controls, box=box.SINGLE, style="dim")
-    
-    def _create_mini_bar(self, value: float, max_value: float, width: int) -> Text:
-        """Create a mini progress bar"""
-        percent = (value / max_value) * 100 if max_value > 0 else 0
-        filled = int((percent / 100) * width)
-        
-        # Color based on value
-        if percent < 50:
-            color = "green"
-        elif percent < 80:
+        if percent > 80:
+            color = "red"
+        elif percent > 60:
             color = "yellow"
         else:
+            color = "green"
+            
+        return f"[{color}]{'█' * filled}[/{color}][dim]{'░' * empty}[/dim]"
+        
+    def _create_bar(self, percent: float, width: int) -> str:
+        """Create progress bar"""
+        filled = int(width * percent / 100)
+        empty = width - filled
+        
+        if percent > 80:
             color = "red"
+        elif percent > 60:
+            color = "yellow"
+        else:
+            color = "green"
+            
+        return f"[{color}]{'█' * filled}[/{color}][dim]{'░' * empty}[/dim]"
         
-        bar = Text()
-        bar.append("█" * filled, style=color)
-        bar.append("░" * (width - filled), style="dim")
+    def get_summary(self) -> Dict[str, Any]:
+        """Get resource usage summary"""
+        return {
+            "cpu": {
+                "current": self.cpu_history[-1] if self.cpu_history else 0,
+                "average": sum(self.cpu_history) / len(self.cpu_history) if self.cpu_history else 0,
+                "max": max(self.cpu_history) if self.cpu_history else 0
+            },
+            "memory": {
+                "current": self.memory_history[-1] if self.memory_history else 0,
+                "average": sum(self.memory_history) / len(self.memory_history) if self.memory_history else 0,
+                "max": max(self.memory_history) if self.memory_history else 0
+            },
+            "disk": {
+                "current": self.disk_history[-1] if self.disk_history else 0
+            }
+        }
+
+
+class ProgressTracker:
+    """Track processing progress"""
+    
+    def __init__(self, output_dir: Path):
+        self.output_dir = Path(output_dir)
+        self.start_time = time.time()
+        self.file_times = deque(maxlen=100)
         
-        return bar
+    def add_file_time(self, processing_time: float):
+        """Record file processing time"""
+        self.file_times.append(processing_time)
+        
+    def get_average_time(self) -> float:
+        """Get average processing time"""
+        if not self.file_times:
+            return 0
+        return sum(self.file_times) / len(self.file_times)
+        
+    def estimate_remaining_time(self, files_remaining: int) -> float:
+        """Estimate remaining processing time"""
+        avg_time = self.get_average_time()
+        if avg_time > 0:
+            return files_remaining * avg_time
+        return 0
+
+
+# Standalone monitoring function
+def monitor_output(output_dir: str, mode: str = MonitoringMode.AUTO, refresh_rate: float = 1.0) -> None:
+    """Monitor MetaMap processing output directory
     
-    def _on_progress_update(self, event_type: str, data: Any):
-        """Handle progress updates"""
-        # Update statistics dashboard
-        if event_type == "file_completed":
-            self.statistics_dashboard.update_file_processed(
-                data['batch'],
-                data['file'],
-                data['time'],
-                data['concepts']
-            )
-        elif event_type == "file_failed":
-            self.statistics_dashboard.update_file_failed(
-                data['batch'],
-                data['file'],
-                data['error']
-            )
+    Args:
+        output_dir: Output directory to monitor
+        mode: Display mode
+        refresh_rate: Update frequency in seconds
+    """
+    monitor = UnifiedMonitor(Path(output_dir), mode)
+    monitor.update_interval = refresh_rate
     
-    # Integration methods for batch processors
-    def create_batch(self, batch_id: str, total_files: int):
-        """Create a new batch for tracking"""
-        self.progress_tracker.create_batch(batch_id, total_files)
-        self.statistics_dashboard.start_batch(batch_id, total_files)
-        self.live_logger.add_entry("INFO", "BatchManager", f"Started batch {batch_id} with {total_files} files")
-    
-    def update_file_progress(self, batch_id: str, filename: str, stage: str, progress: float):
-        """Update file processing progress"""
-        self.progress_tracker.update_file_stage(filename, stage, progress, batch_id)
-    
-    def complete_file(self, batch_id: str, filename: str, concepts_count: int):
-        """Mark file as completed"""
-        self.progress_tracker.complete_file(filename, concepts_count, batch_id)
-        self.live_logger.add_entry("INFO", "FileProcessor", f"Completed {Path(filename).name} with {concepts_count} concepts")
-    
-    def fail_file(self, batch_id: str, filename: str, error: str):
-        """Mark file as failed"""
-        self.progress_tracker.fail_file(filename, error, batch_id)
-        self.live_logger.add_entry("ERROR", "FileProcessor", f"Failed {Path(filename).name}: {error}")
-    
-    def log(self, level: str, source: str, message: str, **kwargs):
-        """Add log entry"""
-        self.live_logger.add_entry(level, source, message, **kwargs)
-    
-    def get_logger_handler(self):
-        """Get Python logging handler for integration"""
-        integration = LoggerIntegration(self.live_logger)
-        return integration.create_handler()
+    try:
+        monitor.start(live_display=True)
+        
+        # Keep running until interrupted
+        while True:
+            time.sleep(1)
+            
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Monitoring stopped by user[/yellow]")
+    finally:
+        monitor.stop()
+        
+        # Export final report
+        report_path = monitor.export_report()
+        console.print(f"\n[green]Report saved to: {report_path}[/green]")

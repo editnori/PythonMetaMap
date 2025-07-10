@@ -1,6 +1,0 @@
-META_BATCH_START_NOTE_ID:test_3.txt
-"CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
-"C0278329","-694","Prescribed","Prescribed","Prescribed antibiotics","hlca","CHV,LCH,MTH,SNMI","0:10"
-"C0003237","-861","Antibiotics","Antibiotics, Antitubercular","Prescribed antibiotics","antb","AOD,ATC,MSH,MTH,NLMSubSyn","11:11"
-"C0035253","-1000","Rest","Rest","rest.","dora","CHV,CSP,LCH,LCH_NW,LNC,MSH,MTH,NCI,SNOMEDCT_US","27:4"
-META_BATCH_END_NOTE_ID:test_3.txt

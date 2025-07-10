@@ -119,7 +119,8 @@ class Config:
             "output_dir": self.output_dir,
             "output_format": self.output_format,
             "java_heap_size": self.java_heap_size,
-            "use_java_api": self.use_java_api,
+            "java_home": self.java_home,
+            "java_api_path": self.java_api_path,
             "custom_options": self.custom_options
         }
 
@@ -130,7 +131,7 @@ class PyMMConfig:
     CONFIG_FILE = Path.home() / ".pymm_controller_config.json"
     
     DEFAULTS = {
-        "metamap_processing_options": "-c -Q 4 -K --sldi -I --XMLf1 --negex -y -Z 2020AA --lexicon db",
+        "metamap_processing_options": "-c -Q 4 -K --sldi -I --XMLf1 --negex -y -Z 2020AA --lexicon db --prune 30",
         "max_parallel_workers": 4,
         "pymm_timeout": 300,
         "java_heap_size": "4g",
@@ -279,6 +280,10 @@ class PyMMConfig:
             self._config = self.DEFAULTS.copy()
             self._apply_auto_defaults()
         self.save()
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert configuration to dictionary"""
+        return self._config.copy()
     
     def prompt_for_value(self, key: str, prompt_text: str, 
                         explanation: str = "", is_essential: bool = False,

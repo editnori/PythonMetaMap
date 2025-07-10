@@ -32,7 +32,7 @@ class FileProcessor:
     def __init__(self, metamap_binary_path: str, output_dir: str, 
                  metamap_options: str = "", timeout: int = 300,
                  metamap_instance=None, tagger_port=1795, wsd_port=5554,
-                 worker_id=0, state_manager=None):
+                 worker_id=0, state_manager=None, file_tracker=None):
         self.metamap_binary_path = metamap_binary_path
         self.output_dir = Path(output_dir)
         self.metamap_options = metamap_options
@@ -42,6 +42,7 @@ class FileProcessor:
         self.wsd_port = wsd_port
         self.worker_id = worker_id
         self.state_manager = state_manager  # For tracking concepts
+        self.file_tracker = file_tracker  # For unified tracking
         self.logger = logging.getLogger(f"FileProcessor-{worker_id}")
         
         # Setup file logging for this worker
@@ -82,15 +83,32 @@ class FileProcessor:
         input_path = Path(input_file_path)
         output_path = self._get_output_path(input_path.name)
         
+        # Mark file as in progress in unified tracker
+        if self.file_tracker:
+            self.file_tracker.start_processing(input_path)
+        
         try:
             # Read input file
             content = self._read_input_file(input_path)
             if not content:
                 self._write_empty_output(output_path, input_path.name)
+                # Mark as completed with 0 concepts
+                if self.file_tracker:
+                    self.file_tracker.complete_processing(input_path, concepts_found=0, processing_time=time.time() - start_time)
                 return True, time.time() - start_time, None
             
             # Process through MetaMap
-            concepts = self._process_content(content, input_path.name)
+            try:
+                concepts = self._process_content(content, input_path.name)
+            except Exception as e:
+                # Mark as failed in both trackers
+                if self.state_manager:
+                    self.state_manager.mark_failed(str(input_path), str(e))
+                if self.file_tracker:
+                    self.file_tracker.fail_processing(input_path, str(e))
+                
+                self.logger.error(f"Error processing {input_path.name}: {e}")
+                raise
             
             # Write output
             self._write_output(output_path, input_path.name, concepts)
@@ -105,22 +123,36 @@ class FileProcessor:
             
             processing_time = time.time() - start_time
             self.logger.info(f"Processed {input_path.name} in {processing_time:.2f}s, found {len(concepts)} concepts")
+            
+            # Mark as completed in unified tracker
+            if self.file_tracker:
+                self.file_tracker.complete_processing(input_path, concepts_found=len(concepts), processing_time=processing_time)
+            
             return True, processing_time, None
             
         except MetamapStuck as e:
             error_msg = f"MetaMap timeout after {self.timeout}s"
             self._write_error_output(output_path, input_path.name, error_msg)
+            # Mark as failed in unified tracker
+            if self.file_tracker:
+                self.file_tracker.fail_processing(input_path, error_msg)
             return False, time.time() - start_time, error_msg
             
         except ParseError as e:
             error_msg = f"Parse error: {e.details}"
             self._write_error_output(output_path, input_path.name, error_msg)
+            # Mark as failed in unified tracker
+            if self.file_tracker:
+                self.file_tracker.fail_processing(input_path, error_msg)
             return False, time.time() - start_time, error_msg
             
         except Exception as e:
             error_msg = f"Unexpected error: {str(e)}"
             self.logger.exception(f"Error processing {input_path.name}")
             self._write_error_output(output_path, input_path.name, error_msg)
+            # Mark as failed in unified tracker
+            if self.file_tracker:
+                self.file_tracker.fail_processing(input_path, error_msg)
             return False, time.time() - start_time, error_msg
     
     def _get_output_path(self, input_basename: str) -> Path:

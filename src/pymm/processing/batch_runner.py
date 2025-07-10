@@ -20,7 +20,8 @@ from rich.console import Console
 
 from ..core.config import PyMMConfig
 from ..core.state import StateManager
-from ..core.exceptions import MetamapStuck, ServerConnectionError, ParseError
+from ..core.job_manager import get_job_manager
+from ..core.file_tracker import UnifiedFileTracker
 from ..server.manager import ServerManager
 from ..server.health_check import HealthMonitor
 from .pool_manager import MetaMapInstancePool
@@ -32,51 +33,64 @@ console = Console()
 
 
 class BatchRunner:
-    """Advanced batch processing with progress tracking and scalability"""
+    """Handles batch processing of files through MetaMap with optimizations"""
     
     def __init__(self, input_dir: str, output_dir: str, config: PyMMConfig):
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
         self.config = config
         
-        # Create output directory structure
+        # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Setup logging
         self.logs_dir = self.output_dir / "logs"
         self.logs_dir.mkdir(exist_ok=True)
-        
-        # Setup logging to file
         self._setup_logging()
         
-        # Processing configuration
+        # Configuration
         self.max_workers = config.get("max_parallel_workers", 4)
         self.timeout = config.get("pymm_timeout", 300)
-        
-        # Job management
-        self.job_id = config.get("job_id", None)
-        self.job_manager = None
-        if self.job_id:
-            try:
-                from ..core.job_manager import get_job_manager
-                self.job_manager = get_job_manager()
-                logger.info(f"Connected to job manager with job ID: {self.job_id}")
-            except Exception as e:
-                logger.warning(f"Could not connect to job manager: {e}")
-        
-        # Handle string boolean values
-        use_pool = config.get("use_instance_pool", True)
-        if isinstance(use_pool, str):
-            self.use_instance_pool = use_pool.lower() in ('yes', 'true', '1')
-        else:
-            self.use_instance_pool = bool(use_pool)
-            
-        show_progress = config.get("progress_bar", True)
-        if isinstance(show_progress, str):
-            self.show_progress = show_progress.lower() in ('yes', 'true', '1')
-        else:
-            self.show_progress = bool(show_progress)
+        self.use_instance_pool = config.get("use_instance_pool", True)
+        self.show_progress = config.get("progress_bar", True)
         
         # State management
         self.state_manager = StateManager(str(self.output_dir))
+        
+        # Unified file tracking
+        self.file_tracker = UnifiedFileTracker(config) if config.get('use_unified_tracking', True) else None
+        
+        # Job management
+        self.job_manager = get_job_manager() if config.get("enable_job_tracking", True) else None
+        self.job_id = config.get("job_id", None)
+        
+        # Create a job if job manager is enabled but no job_id provided
+        if self.job_manager and not self.job_id:
+            from ..core.job_manager import JobType
+            self.job_id = self.job_manager.create_job(
+                job_type=JobType.BATCH,
+                input_dir=str(self.input_dir),
+                output_dir=str(self.output_dir),
+                config={
+                    'max_workers': self.max_workers,
+                    'timeout': self.timeout,
+                    'use_instance_pool': self.use_instance_pool
+                }
+            )
+            logger.info(f"Created job {self.job_id} for batch processing")
+            
+        # Handle string boolean values
+        if isinstance(self.use_instance_pool, str):
+            self.use_instance_pool = self.use_instance_pool.lower() in ('yes', 'true', '1')
+        else:
+            self.use_instance_pool = bool(self.use_instance_pool)
+            
+        if isinstance(self.show_progress, str):
+            self.show_progress = self.show_progress.lower() in ('yes', 'true', '1')
+        else:
+            self.show_progress = bool(self.show_progress)
+        
+        # Retry management
         self.retry_manager = RetryManager(config, self.state_manager)
         
         # Server management
@@ -189,7 +203,8 @@ class BatchRunner:
                 self.config.get("metamap_processing_options", ""),
                 self.timeout,
                 metamap_instance=mm_instance,  # Pass the pooled instance
-                state_manager=self.state_manager  # Pass state manager for concept tracking
+                state_manager=self.state_manager,  # Pass state manager for concept tracking
+                file_tracker=self.file_tracker  # Pass file tracker for tracking
             )
             
             # Process the file
@@ -207,7 +222,8 @@ class BatchRunner:
             str(self.output_dir),
             self.config.get("metamap_processing_options", ""),
             self.timeout,
-            state_manager=self.state_manager  # Pass state manager for concept tracking
+            state_manager=self.state_manager,  # Pass state manager for concept tracking
+            file_tracker=self.file_tracker  # Pass file tracker for tracking
         )
         
         return processor.process_file(str(file))
@@ -286,21 +302,23 @@ class BatchRunner:
                         current_time = time.time()
                         current_percentage = int((completed / len(files)) * 100)
                         
-                        # Only update if enough time has passed AND percentage has changed
+                        # Update job manager immediately for each file
+                        if self.job_manager and self.job_id:
+                            self.job_manager.update_progress(self.job_id, {
+                                'total_files': len(files),
+                                'processed': results["processed"],
+                                'failed': results["failed"],
+                                'percentage': current_percentage,
+                                'current_file': file.name,
+                                'last_updated': datetime.now().isoformat()
+                            })
+                        
+                        # Only update progress bar if enough time has passed AND percentage has changed
                         if (current_time - last_update_time >= 0.5 and 
                             current_percentage != last_percentage):
                             progress.update(task, completed=completed)
                             last_update_time = current_time
                             last_percentage = current_percentage
-                            
-                            # Update job manager
-                            if self.job_manager and self.job_id:
-                                self.job_manager.update_progress(self.job_id, {
-                                    'total_files': len(files),
-                                    'processed': results["processed"],
-                                    'failed': results["failed"],
-                                    'percentage': current_percentage
-                                })
                     
                     # Final update to ensure 100%
                     progress.update(task, completed=len(files))

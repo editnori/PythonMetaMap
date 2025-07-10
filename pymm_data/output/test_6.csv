@@ -1,6 +1,0 @@
-META_BATCH_START_NOTE_ID:test_6.txt
-"CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
-"C1271104","-1000","Blood Pressure","Blood pressure finding","Blood pressure","fndg","MTH,NCI,NLMSubSyn,SNOMEDCT_US","0:14"
-"C0205250","-770","Elevated","High","elevated at 150/90.","qlco","CHV,MTH,NCI,SNMI,SNOMEDCT_US","18:8"
-"C0439087","-770","<90","<90","elevated at 150/90.","qnco","SNOMEDCT_US","34:2"
-META_BATCH_END_NOTE_ID:test_6.txt

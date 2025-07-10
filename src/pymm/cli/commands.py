@@ -844,13 +844,26 @@ def explore_output(output_dir, detailed, concepts):
 @click.option('--live', '-l', is_flag=True, help='Launch live job monitor')
 def monitor(output_dir, follow, stats, live):
     """Monitor processing jobs"""
-    # Launch live job monitor if requested
-    if live:
-        from ..cli.monitor import monitor_jobs
+    # Launch unified monitor if requested or by default
+    if live or (not follow and not stats and not output_dir):
+        # Use unified monitor with file tracking
+        from ..monitoring.unified_monitor import UnifiedMonitor
+        from ..core.config import PyMMConfig
+        
+        config = PyMMConfig()
+        monitor = UnifiedMonitor(config=config)
+        
+        console.print("[cyan]Starting Unified Monitor...[/cyan]")
+        console.print("[dim]Press Ctrl+C to exit[/dim]\n")
+        
         try:
-            monitor_jobs()
+            monitor.start()
+            # Keep the main thread alive
+            while monitor._running:
+                time.sleep(1)
         except KeyboardInterrupt:
-            pass
+            monitor.stop()
+            console.print("\n[yellow]Monitor stopped[/yellow]")
         return
     
     # Legacy single-job monitoring

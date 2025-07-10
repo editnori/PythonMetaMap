@@ -1,9 +1,0 @@
-META_BATCH_START_NOTE_ID:test_4.txt
-"CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
-"C0589120","-623","Follow-up","Follow-up status","Follow-up appointment in two weeks.","fndg","CHV,LNC,MTH,SNOMEDCT_US","0:9"
-"C0003629","-753","Appointment","Appointments","Follow-up appointment in two weeks.","tmco","CHV,HL7V3.0,MSH,SNOMEDCT_US","10:11"
-"C4082118","-623","Two weeks","Two weeks","Follow-up appointment in two weeks.","tmco","SNOMEDCT_US","25:9"
-"C1522577","-623","Followup","follow-up","Follow-up appointment in two weeks.","hlca","MTH,NCI,NCI_CDISC,NCI_NCI-GLOSS","0:9"
-"C0003629","-753","Appointment","Appointments","Follow-up appointment in two weeks.","tmco","CHV,HL7V3.0,MSH,SNOMEDCT_US","10:11"
-"C4082118","-623","Two weeks","Two weeks","Follow-up appointment in two weeks.","tmco","SNOMEDCT_US","25:9"
-META_BATCH_END_NOTE_ID:test_4.txt

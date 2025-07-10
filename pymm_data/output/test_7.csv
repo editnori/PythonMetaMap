@@ -1,6 +1,0 @@
-META_BATCH_START_NOTE_ID:test_7.txt
-"CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
-"C1272689","-753","Started","Started","Started on metformin 500mg twice daily.","qlco","CHV,MTH,SNOMEDCT_US","0:7"
-"C0025598","-753","METFORMIN","metformin","Started on metformin 500mg twice daily.","orch,phsu","ATC,CHV,CSP,DRUGBANK,LCH_NW,LNC,MSH,MTH,MTHSPL,NCI,NCI_CTRP,NCI_FDA,NCI_NCI-GLOSS,RXNORM,SNOMEDCT_US,VANDF","11:9"
-"C0585361","-790","Twice Daily","Twice a day","Started on metformin 500mg twice daily.","tmco","CHV,MTH,NCI,NCI_CDISC,SNOMEDCT_US","27:11"
-META_BATCH_END_NOTE_ID:test_7.txt

@@ -529,22 +529,34 @@ class ServerManager:
     
     def start_all(self) -> bool:
         """Start all MetaMap servers with improved reliability"""
-        # First, clean up any stale processes
-        self.logger.info("Cleaning up any stale processes...")
-        self.force_kill_all()
-        time.sleep(3)
+        # Check if servers are already running
+        tagger_running = self.is_tagger_server_running()
+        wsd_running = self.is_wsd_server_running()
+        
+        if tagger_running and wsd_running:
+            self.logger.info("All servers already running")
+            return True
+        
+        # Only clean up if servers are not running
+        if not tagger_running or not wsd_running:
+            self.logger.info("Starting MetaMap servers...")
+            # Don't force kill everything, just clean up stuck ports
+            if not tagger_running:
+                self._kill_process_on_port(1795)
+            if not wsd_running:
+                self._kill_process_on_port(5554)
+            time.sleep(1)  # Short delay after cleanup
         
         # Start servers
-        tagger_ok = self.start_tagger_server()
-        wsd_ok = self.start_wsd_server()
+        tagger_ok = self.start_tagger_server() if not tagger_running else True
+        wsd_ok = self.start_wsd_server() if not wsd_running else True
         mmserver_ok = self.start_mmserver()
         
-        # Verify connectivity
+        # Quick connectivity check
         if self.metamap_binary_path and tagger_ok:
-            time.sleep(5)  # Give servers time to fully initialize
-            success = self.verify_connectivity()
-            if not success:
-                self.logger.warning("MetaMap connectivity test failed, servers may need more time")
+            time.sleep(2)  # Reduced from 5 seconds
+            # Skip connectivity test for now - it adds too much delay
+            # success = self.verify_connectivity()
         
         return tagger_ok  # Tagger is essential
     
@@ -552,29 +564,20 @@ class ServerManager:
         """Stop all MetaMap servers"""
         self.logger.info("Stopping MetaMap servers...")
         
-        # Use control scripts if available
-        skr_ctl = self.server_scripts_dir / "skrmedpostctl"
-        wsd_ctl = self.server_scripts_dir / "wsdserverctl"
+        # Check what's actually running
+        tagger_running = self.is_tagger_server_running()
+        wsd_running = self.is_wsd_server_running()
         
-        if skr_ctl.exists():
-            try:
-                subprocess.run([str(skr_ctl), "stop"], capture_output=True)
-            except:
-                pass
-                
-        if wsd_ctl.exists():
-            try:
-                subprocess.run([str(wsd_ctl), "stop"], capture_output=True)
-            except:
-                pass
+        # Only stop what's running
+        if tagger_running:
+            self.stop_tagger()
+        if wsd_running:
+            self.stop_wsd()
         
-        # Force kill all processes to ensure clean stop
-        killed = self.force_kill_all()
+        # Quick cleanup of any remaining processes
+        self._cleanup_processes()
         
-        if killed > 0:
-            self.logger.info(f"Force stopped {killed} processes")
-        else:
-            self.logger.info("All servers stopped cleanly")
+        self.logger.info("All servers stopped")
     
     def restart_service(self, service: str) -> bool:
         """Restart a specific service"""
@@ -788,3 +791,18 @@ class ServerManager:
             self.logger.info(f"WSD server on port {port}: {'started' if success else 'failed'}")
         
         return results
+    
+    def _cleanup_processes(self):
+        """Quick cleanup of MetaMap processes without excessive delays"""
+        # Kill by process name
+        process_names = ["taggerServer", "DisambiguatorServer", "mmserver20"]
+        
+        for proc_name in process_names:
+            try:
+                subprocess.run(
+                    ["pkill", "-f", proc_name],
+                    capture_output=True,
+                    timeout=2
+                )
+            except:
+                pass

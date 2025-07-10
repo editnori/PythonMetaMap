@@ -11,7 +11,7 @@ from rich import print as rprint
 
 from ..core.config import PyMMConfig
 from ..server.manager import ServerManager
-from ..processing.batch_runner import BatchRunner
+from ..processing.unified_processor import UnifiedProcessor, ProcessingMode
 from .commands import server_group, config_group, stats_group, monitor, retry, retry_failed, chunked_process_cmd
 from .interactive import interactive_ultimate as interactive_mode
 try:
@@ -33,11 +33,11 @@ ASCII_BANNER = r"""[bold cyan]
  |  __/| |_| | |  | || |  | |
  |_|    \__, |_|  |_||_|  |_|
         |___/                 [/bold cyan]
-[dim]Python MetaMap Orchestrator v9.4.8[/dim]
+[dim]Python MetaMap Orchestrator v9.5.5[/dim]
 """
 
 @click.group(invoke_without_command=True)
-@click.version_option(version='9.4.8', prog_name='pymm')
+@click.version_option(version='9.5.5', prog_name='pymm')
 @click.option('--interactive', '-i', is_flag=True, help='Launch interactive mode')
 @click.pass_context
 def cli(ctx, interactive):
@@ -69,7 +69,8 @@ def cli(ctx, interactive):
               help='Enable interactive monitoring during processing')
 @click.option('--background', '-b', is_flag=True,
               help='Run in background mode (for nohup)')
-def process(input_dir, output_dir, workers, timeout, retry, instance_pool, start_servers, interactive_monitor, background):
+@click.option('--job-id', type=str, help='Job ID for tracking (used internally)')
+def process(input_dir, output_dir, workers, timeout, retry, instance_pool, start_servers, interactive_monitor, background, job_id):
     """Process files through MetaMap
     
     Examples:
@@ -110,6 +111,14 @@ def process(input_dir, output_dir, workers, timeout, retry, instance_pool, start
     # In background mode, disable progress bar
     if background:
         config.set("progress_bar", False)
+    
+    # Set job ID if provided (for background job tracking)
+    if job_id:
+        config.set("job_id", job_id)
+        # Import job manager and update job status
+        from ..core.job_manager import get_job_manager
+        job_manager = get_job_manager()
+        job_manager.start_job(job_id, os.getpid())
     
     # Show configuration (skip in background mode)
     if not background:
@@ -169,7 +178,7 @@ def process(input_dir, output_dir, workers, timeout, retry, instance_pool, start
     
     # Run batch processing
     try:
-        runner = BatchRunner(input_dir, output_dir, config)
+        runner = UnifiedProcessor(input_dir, output_dir, config, mode=ProcessingMode.STANDARD)
         
         if background:
             print(f"Starting batch processing: {input_dir} -> {output_dir}")
@@ -196,12 +205,21 @@ def process(input_dir, output_dir, workers, timeout, retry, instance_pool, start
                 summary.add_row("Throughput", f"{results.get('throughput', 0):.2f} files/s")
                 
                 console.print(summary)
+            
+            # Update job status if job_id provided
+            if job_id:
+                job_manager.complete_job(job_id)
         else:
             error_msg = f"Processing failed: {results.get('error')}"
             if background:
                 print(f"ERROR: {error_msg}")
             else:
                 console.print(f"\n[red]✗ {error_msg}[/red]")
+            
+            # Update job status if job_id provided
+            if job_id:
+                job_manager.complete_job(job_id, error=error_msg)
+                
             sys.exit(1)
             
     except Exception as e:
@@ -210,6 +228,14 @@ def process(input_dir, output_dir, workers, timeout, retry, instance_pool, start
             print(f"ERROR: {error_msg}")
         else:
             console.print(f"\n[red]{error_msg}[/red]")
+        
+        # Update job status if job_id provided
+        if job_id:
+            try:
+                job_manager.complete_job(job_id, error=str(e))
+            except:
+                pass
+                
         sys.exit(1)
 
 @cli.command()
@@ -228,7 +254,7 @@ def resume(output_dir):
     
     try:
         with console.status("Resuming batch processing...") as status:
-            results = BatchRunner.resume(output_dir, config)
+            results = UnifiedProcessor.resume(output_dir, config)
         
         if results.get("success"):
             console.print("\n[green]✓ Processing complete![/green]")
