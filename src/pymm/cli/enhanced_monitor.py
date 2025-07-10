@@ -28,6 +28,7 @@ from ..core.job_manager import get_job_manager, JobStatus, JobType
 from ..core.config import PyMMConfig
 from ..processing.worker import FileProcessor, CSV_HEADER
 from ..processing.optimized_batch_runner import OptimizedBatchRunner
+from ..server.manager import ServerManager
 
 console = Console()
 
@@ -62,6 +63,7 @@ class EnhancedMonitor:
     def __init__(self, config: PyMMConfig = None):
         self.config = config or PyMMConfig()
         self.job_manager = get_job_manager()
+        self.server_manager = ServerManager(self.config)
         self.running = False
         
         # File explorer state
@@ -275,6 +277,20 @@ class EnhancedMonitor:
         if not self.selected_files:
             return
             
+        # Check if MetaMap servers are running
+        if not self.server_manager.is_running():
+            # Try to start servers automatically
+            try:
+                self.server_manager.start_all()
+                # Wait for servers to be ready
+                time.sleep(2)
+            except Exception as e:
+                # Update status to show error
+                for item in self.file_items:
+                    if item.is_selected:
+                        item.processing_status = 'failed'
+                return
+                
         # Get output directory
         output_dir = self.config.get('default_output_dir', './output_csvs')
         output_path = Path(output_dir) / f"quick_process_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
