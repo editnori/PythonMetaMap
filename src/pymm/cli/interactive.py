@@ -1276,13 +1276,14 @@ class UltimateInteractiveNavigator:
             
             menu_items = [
                 ("1", "Quick Process", COLORS['success']),
-                ("2", "Monitor", "cyan"),
-                ("3", "Batch Process", COLORS['primary']),
-                ("4", "View Results", COLORS['secondary']),
-                ("5", "Analysis Tools", "magenta"),
-                ("6", "Configuration", COLORS['warning']),
-                ("7", "Server Control", COLORS['error']),
-                ("8", "Resume/Retry", "yellow"),
+                ("2", "File Explorer", COLORS['info']),
+                ("3", "Monitor", "cyan"),
+                ("4", "Batch Process", COLORS['primary']),
+                ("5", "View Results", COLORS['secondary']),
+                ("6", "Analysis Tools", "magenta"),
+                ("7", "Configuration", COLORS['warning']),
+                ("8", "Server Control", COLORS['error']),
+                ("9", "Resume/Retry", "yellow"),
                 ("0", "Help", "dim"),
                 ("Q", "Quit", "dim")
             ]
@@ -1324,18 +1325,20 @@ class UltimateInteractiveNavigator:
         if choice == "1":
             self.quick_process()
         elif choice == "2":
-            self.monitor()
+            self.file_explorer()
         elif choice == "3":
-            self.batch_process()
+            self.monitor()
         elif choice == "4":
-            self.view_results()
+            self.batch_process()
         elif choice == "5":
-            self.analysis_tools()
+            self.view_results()
         elif choice == "6":
-            self.configuration()
+            self.analysis_tools()
         elif choice == "7":
-            self.server_control()
+            self.configuration()
         elif choice == "8":
+            self.server_control()
+        elif choice == "9":
             self.resume_retry()
         elif choice == "0":
             self.show_help()
@@ -3360,6 +3363,85 @@ Output Directory: {output_path}"""
             if choice != "b":
                 input("\nPress Enter to continue...")
                 
+    def _show_server_statistics(self):
+        """Show server statistics"""
+        console.print("\n[bold]Server Statistics[/bold]")
+        
+        # Get server status
+        status = self.server_manager.check_server_status()
+        
+        # Create statistics table
+        stats_table = Table(box=box.ROUNDED)
+        stats_table.add_column("Component", style="cyan")
+        stats_table.add_column("Status", style="green")
+        stats_table.add_column("Port", style="yellow")
+        stats_table.add_column("PID", style="magenta")
+        
+        # Check each component
+        components = [
+            ("Tagger Server", "tagger", 1795),
+            ("WSD Server", "wsd", 5554),
+            ("MetaMap Server", "metamap", 8066)
+        ]
+        
+        for name, key, port in components:
+            if status.get(key, False):
+                status_text = "[green]● Running[/green]"
+                # Try to get PID
+                pid = "N/A"
+                try:
+                    import psutil
+                    for proc in psutil.process_iter(['pid', 'name', 'connections']):
+                        try:
+                            for conn in proc.connections():
+                                if conn.laddr.port == port:
+                                    pid = str(proc.pid)
+                                    break
+                        except:
+                            pass
+                except:
+                    pass
+            else:
+                status_text = "[red]● Stopped[/red]"
+                pid = "-"
+                
+            stats_table.add_row(name, status_text, str(port), pid)
+            
+        console.print(stats_table)
+        
+        # System resource usage
+        try:
+            import psutil
+            console.print("\n[bold]Resource Usage:[/bold]")
+            
+            # Find MetaMap processes
+            metamap_processes = []
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_info']):
+                try:
+                    if any(term in proc.info['name'].lower() for term in ['java', 'metamap', 'mmserver']):
+                        metamap_processes.append(proc)
+                except:
+                    pass
+                    
+            if metamap_processes:
+                total_cpu = sum(p.cpu_percent() for p in metamap_processes)
+                total_memory = sum(p.memory_info().rss for p in metamap_processes) / 1024 / 1024
+                
+                console.print(f"Total CPU Usage: {total_cpu:.1f}%")
+                console.print(f"Total Memory Usage: {total_memory:.1f} MB")
+                console.print(f"Active Processes: {len(metamap_processes)}")
+            else:
+                console.print("[dim]No MetaMap processes found[/dim]")
+                
+        except Exception as e:
+            console.print(f"[yellow]Could not get resource statistics: {e}[/yellow]")
+            
+        # Configuration info
+        console.print("\n[bold]Configuration:[/bold]")
+        console.print(f"MetaMap Binary: {self.config.get('metamap_binary_path', 'Not set')}")
+        console.print(f"MetaMap Home: {self.config.get('metamap_home', 'Not set')}")
+        console.print(f"Processing Options: {self.config.get('metamap_processing_options', 'Default')}")
+        
     def _view_server_logs(self):
         """View server logs"""
         console.print("\n[bold]Server Logs[/bold]")

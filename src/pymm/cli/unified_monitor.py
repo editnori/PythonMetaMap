@@ -19,6 +19,7 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.console import Group
 from rich.live import Live
 from rich.align import Align
 from rich import box
@@ -655,10 +656,16 @@ class UnifiedMonitor:
             
         # Path info
         path_info = f"{self.current_path} ({len(self.selected_files)} selected)"
-        content = f"[dim]{path_info}[/dim]\n{table}"
         
         title = "[bold]File Explorer[/bold]"
         border_style = "bright_cyan" if self.active_pane == "files" else "dim"
+        
+        # Combine path info and table
+        from rich.console import Group
+        content = Group(
+            Text(path_info, style="dim"),
+            table
+        )
         
         return Panel(content, title=title, box=box.ROUNDED, style=border_style)
         
