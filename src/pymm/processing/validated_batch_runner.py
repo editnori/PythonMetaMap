@@ -57,7 +57,7 @@ class ValidatedBatchRunner(OptimizedBatchRunner):
         """Comprehensive validation of environment and prerequisites"""
         result = ValidationResult()
         
-        console.print("\n[bold cyan]🔍 Running Pre-Processing Validation...[/bold cyan]\n")
+        console.print("\n[bold cyan]Running Pre-Processing Validation...[/bold cyan]\n")
         
         # 1. Check Java
         java_ok, java_version = self._check_java()
@@ -266,7 +266,7 @@ class ValidatedBatchRunner(OptimizedBatchRunner):
         table.add_column("Details", style="dim")
         
         for check in result.checks:
-            status_icon = "✅" if check['status'] else "❌"
+            status_icon = "[PASS]" if check['status'] else "[FAIL]"
             status_color = "green" if check['status'] else "red"
             table.add_row(
                 check['name'],
@@ -278,15 +278,15 @@ class ValidatedBatchRunner(OptimizedBatchRunner):
         
         # Show warnings
         if result.warnings:
-            console.print("\n[yellow]⚠️  Warnings:[/yellow]")
+            console.print("\n[yellow]Warnings:[/yellow]")
             for warning in result.warnings:
-                console.print(f"   • {warning}")
+                console.print(f"   - {warning}")
                 
         # Show errors
         if result.errors:
-            console.print("\n[red]❌ Errors:[/red]")
+            console.print("\n[red]Errors:[/red]")
             for error in result.errors:
-                console.print(f"   • {error}")
+                console.print(f"   - {error}")
                 
         return result.passed
         
@@ -329,12 +329,12 @@ class ValidatedBatchRunner(OptimizedBatchRunner):
                     time.sleep(3)  # Give servers time to initialize
                     progress.update(task, completed=1)
                     
-                console.print("[green]✅ MetaMap servers started successfully[/green]")
+                console.print("[green]MetaMap servers started successfully[/green]")
             except Exception as e:
                 console.print(f"[red]Failed to start servers: {e}[/red]")
                 return {"status": "failed", "reason": "server_start_failed"}
         else:
-            console.print("[green]✅ MetaMap servers already running[/green]")
+            console.print("[green]MetaMap servers already running[/green]")
             
         # Run the actual processing
         console.print("\n[bold cyan]Starting batch processing...[/bold cyan]\n")

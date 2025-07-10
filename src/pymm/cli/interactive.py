@@ -1862,7 +1862,7 @@ Throughput: {throughput:.2f} files/s"""
             result = smart_runner.run_smart_processing()
             
             if result['status'] == 'completed':
-                console.print(f"\n[green]✅ Successfully processed {result['processed']} files![/green]")
+                console.print(f"\n[green]Successfully processed {result['processed']} files![/green]")
             
             input("\nPress Enter to continue...")
             return
@@ -2914,7 +2914,7 @@ Output Directory: {output_path}"""
                     ("Workers", str(self.config.get('max_parallel_workers', 4))),
                     ("Chunk Size", str(self.config.get('chunk_size', 500))),
                     ("Timeout", f"{self.config.get('pymm_timeout', 300)}s"),
-                    ("File Tracking", "✅ Unified"),
+                    ("File Tracking", "Unified"),
                     ("Data Directory", base_dir)
                 ]
             else:
@@ -2924,7 +2924,7 @@ Output Directory: {output_path}"""
                     ("Workers", str(self.config.get('max_parallel_workers', 4))),
                     ("Chunk Size", str(self.config.get('chunk_size', 500))),
                     ("Timeout", f"{self.config.get('pymm_timeout', 300)}s"),
-                    ("File Tracking", "❌ Traditional"),
+                    ("File Tracking", "Traditional"),
                     ("Input Dir", self.config.get('default_input_dir', './input_notes')),
                     ("Output Dir", self.config.get('default_output_dir', './output_csvs'))
                 ]
@@ -3159,11 +3159,11 @@ Output Directory: {output_path}"""
             for path in [base_path, input_path, output_path]:
                 path.mkdir(parents=True, exist_ok=True)
                 
-            console.print(f"\n[green]✓ Created unified structure:[/green]")
-            console.print(f"  📁 {base_dir}/")
-            console.print(f"    📁 input/   (place your text files here)")
-            console.print(f"    📁 output/  (processed CSV files)")
-            console.print(f"    📄 processing_manifest.json")
+            console.print(f"\n[green]Created unified structure:[/green]")
+            console.print(f"  {base_dir}/")
+            console.print(f"    input/   (place your text files here)")
+            console.print(f"    output/  (processed CSV files)")
+            console.print(f"    processing_manifest.json")
             
             self.config.set('use_unified_tracking', True)
             self.config.set('base_data_dir', base_dir)

@@ -36,21 +36,34 @@ class SmartBatchRunner(ValidatedBatchRunner):
         
     def show_processing_options(self) -> Tuple[List[Path], str]:
         """Show interactive processing options to user"""
+        # First check if this is a new setup
+        if not self.tracker.manifest_path.exists():
+            console.print("\n[yellow]First time setup detected.[/yellow]")
+            console.print(f"Creating unified tracking structure in: {self.tracker.base_dir}")
+            console.print("\nPlease place your text files in:")
+            console.print(f"  [cyan]{self.tracker.input_dir}[/cyan]\n")
+            
+            # Check if there are files in the input directory
+            input_files = list(self.tracker.input_dir.glob("*.txt"))
+            if not input_files:
+                console.print("[yellow]No input files found. Please add text files to the input directory.[/yellow]")
+                return [], "No input files found"
+                
         # Get current status
         summary = self.tracker.get_processing_summary()
         
         # Display current status
-        console.print("\n[bold cyan]📊 File Processing Status[/bold cyan]\n")
+        console.print("\n[bold cyan]File Processing Status[/bold cyan]\n")
         
         status_table = Table(box=box.ROUNDED)
         status_table.add_column("Status", style="cyan")
         status_table.add_column("Count", justify="right")
         
         status_table.add_row("Total Files", str(summary['total_files']))
-        status_table.add_row("✅ Processed", f"[green]{summary['processed']}[/green]")
-        status_table.add_row("❌ Failed", f"[red]{summary['failed']}[/red]")
-        status_table.add_row("🔄 In Progress", f"[yellow]{summary['in_progress']}[/yellow]")
-        status_table.add_row("📄 Unprocessed", f"[blue]{summary['unprocessed']}[/blue]")
+        status_table.add_row("Processed", f"[green]{summary['processed']}[/green]")
+        status_table.add_row("Failed", f"[red]{summary['failed']}[/red]")
+        status_table.add_row("In Progress", f"[yellow]{summary['in_progress']}[/yellow]")
+        status_table.add_row("Unprocessed", f"[blue]{summary['unprocessed']}[/blue]")
         status_table.add_row("", "")
         status_table.add_row("Total Concepts", f"[magenta]{summary['total_concepts']:,}[/magenta]")
         
@@ -62,7 +75,7 @@ class SmartBatchRunner(ValidatedBatchRunner):
         failed = [path for path, _ in self.tracker.get_failed_files()]
         
         if not unprocessed and not failed:
-            console.print("\n[green]✅ All files have been processed successfully![/green]")
+            console.print("\n[green]All files have been processed successfully![/green]")
             
             # Ask if they want to reprocess with change detection
             if Confirm.ask("\nCheck for modified files?", default=False):
@@ -140,7 +153,7 @@ class SmartBatchRunner(ValidatedBatchRunner):
         # Show files with numbers
         console.print("\n[cyan]Available files:[/cyan]")
         for i, (file, status) in enumerate(all_files[:50], 1):
-            status_icon = "📄" if status == "new" else "🔄"
+            status_icon = "[NEW]" if status == "new" else "[RETRY]"
             console.print(f"{i:3d}. {status_icon} {file.name}")
             
         if len(all_files) > 50:
@@ -201,7 +214,7 @@ class SmartBatchRunner(ValidatedBatchRunner):
         for file_path, record in self.tracker.get_processed_files():
             table.add_row(
                 file_path.name,
-                "[green]✅ Complete[/green]",
+                "[green]Complete[/green]",
                 self._format_size(record.file_size),
                 record.process_date[:10],
                 str(record.concepts_found),
@@ -213,7 +226,7 @@ class SmartBatchRunner(ValidatedBatchRunner):
             error_msg = record.error_message[:30] + "..." if len(record.error_message) > 30 else record.error_message
             table.add_row(
                 file_path.name,
-                "[red]❌ Failed[/red]",
+                "[red]Failed[/red]",
                 self._format_size(record.file_size),
                 record.process_date[:10],
                 "-",
@@ -225,7 +238,7 @@ class SmartBatchRunner(ValidatedBatchRunner):
             size = file_path.stat().st_size
             table.add_row(
                 file_path.name,
-                "[blue]📄 New[/blue]",
+                "[blue]New[/blue]",
                 self._format_size(size),
                 "-",
                 "-",

@@ -163,12 +163,12 @@ class ResumeRetryManager:
             job_table.add_column("Error", style="red")
             
             for job in failed_jobs[:20]:
-                error = job.error_message[:40] + "..." if job.error_message and len(job.error_message) > 40 else job.error_message or "Unknown"
+                error = job.error[:40] + "..." if job.error and len(job.error) > 40 else job.error or "Unknown"
                 job_table.add_row(
                     job.job_id[:8],
                     job.job_type.value,
                     Path(job.input_dir).name,
-                    job.updated_at.strftime("%Y-%m-%d %H:%M"),
+                    (job.end_time or job.start_time).strftime("%Y-%m-%d %H:%M"),
                     error
                 )
                 
@@ -402,7 +402,7 @@ class ResumeRetryManager:
             if self.state_dir.exists():
                 shutil.rmtree(self.state_dir)
                 
-        console.print("\n[green]✅ Successfully reset to clean state![/green]")
+        console.print("\n[green]Successfully reset to clean state![/green]")
         console.print("\n[cyan]You can now start fresh with:[/cyan]")
         console.print("• No processing history")
         console.print("• No failed records")
@@ -486,8 +486,8 @@ class ResumeRetryManager:
         
         info_table.add_row("Type", job.job_type.value)
         info_table.add_row("Status", f"[{self._get_status_color(job.status)}]{job.status.value}[/]")
-        info_table.add_row("Created", str(job.created_at))
-        info_table.add_row("Updated", str(job.updated_at))
+        info_table.add_row("Created", str(job.start_time))
+        info_table.add_row("Updated", str(job.end_time or job.start_time))
         info_table.add_row("Input Dir", job.input_dir)
         info_table.add_row("Output Dir", job.output_dir)
         
@@ -495,8 +495,8 @@ class ResumeRetryManager:
             info_table.add_row("Progress", f"{job.progress.get('percentage', 0)}%")
             info_table.add_row("Files", f"{job.progress.get('processed', 0)}/{job.progress.get('total_files', 0)}")
             
-        if job.error_message:
-            info_table.add_row("Error", Text(job.error_message, style="red"))
+        if job.error:
+            info_table.add_row("Error", Text(job.error, style="red"))
             
         console.print(info_table)
         
@@ -528,8 +528,8 @@ class ResumeRetryManager:
                 f.write(f"\nJob ID: {job.job_id}\n")
                 f.write(f"Type: {job.job_type.value}\n")
                 f.write(f"Input: {job.input_dir}\n")
-                f.write(f"Failed: {job.updated_at}\n")
-                f.write(f"Error: {job.error_message}\n")
+                f.write(f"Failed: {job.end_time or job.start_time}\n")
+                f.write(f"Error: {job.error}\n")
                 
             # Failed files
             if failed_files and self.tracker:
@@ -723,7 +723,7 @@ class ResumeRetryManager:
         
         # Analyze recent failures
         recent_threshold = datetime.now() - timedelta(hours=24)
-        recent_jobs = [j for j in failed_jobs if j.updated_at > recent_threshold]
+        recent_jobs = [j for j in failed_jobs if (j.end_time or j.start_time) > recent_threshold]
         
         console.print(f"\nFound {len(recent_jobs)} jobs failed in last 24 hours")
         console.print("Common failure reasons:")
