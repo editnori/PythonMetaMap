@@ -1,4 +1,3 @@
 """Command Line Interface for PythonMetaMap"""
-from .main import cli
-
-__all__ = ['cli']
+# Avoid importing main by default to prevent scipy conflicts
+__all__ = []
