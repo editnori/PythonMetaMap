@@ -11,9 +11,10 @@ import hashlib
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple, Set
 from datetime import datetime, timedelta
-from collections import deque, defaultdict
+from collections import deque, defaultdict, Counter
 import tempfile
 import platform
+import numpy as np
 
 import click
 from rich.console import Console, Group
@@ -40,6 +41,7 @@ from ..processing.ultra_optimized_runner import UltraOptimizedBatchRunner
 from ..processing.pool_manager import AdaptivePoolManager
 from .analysis import ConceptAnalyzer
 from .enhanced_analysis import EnhancedConceptAnalyzer
+from .enhanced_monitor import EnhancedMonitor, run_enhanced_monitor
 
 console = Console()
 
@@ -1280,7 +1282,7 @@ class UltimateInteractiveNavigator:
                 ("5", "Analysis Tools", "magenta"),
                 ("6", "Configuration", COLORS['warning']),
                 ("7", "Server Control", COLORS['error']),
-                ("8", "Job Monitor", "cyan"),
+                ("8", "Enhanced Monitor", "cyan"),
                 ("9", "Resume/Retry", "yellow"),
                 ("*", "Logs & Monitor", "white"),
                 ("0", "Help", "dim"),
@@ -1336,7 +1338,7 @@ class UltimateInteractiveNavigator:
         elif choice == "7":
             self.server_control()
         elif choice == "8":
-            self.job_monitor()
+            self.enhanced_monitor()
         elif choice == "9":
             self.resume_retry()
         elif choice == "*":
@@ -3467,6 +3469,34 @@ Output Directory: {output_path}"""
         # Start job
         job_id = self.background_processor.start_background_process(input_dir, output_dir)
         console.print(f"\n[green]Started background job: {job_id}[/green]")
+    
+    def enhanced_monitor(self):
+        """Launch enhanced monitor with integrated file explorer and job management"""
+        self.clear_screen()
+        console.print(Panel(
+            "[bold]Enhanced Monitor[/bold]\nIntegrated file explorer with live job monitoring",
+            box=box.DOUBLE,
+            style="cyan"
+        ))
+        
+        console.print("\n[yellow]Launching enhanced monitor...[/yellow]")
+        console.print("[dim]This includes:[/dim]")
+        console.print("[dim]• File explorer with quick process[/dim]")
+        console.print("[dim]• Live job monitoring[/dim]")
+        console.print("[dim]• System resource monitoring[/dim]")
+        console.print("[dim]• Job management (cancel/kill)[/dim]")
+        console.print("\n[dim]Press Q to return[/dim]")
+        time.sleep(2)
+        
+        try:
+            # Launch enhanced monitor
+            monitor = EnhancedMonitor(self.config)
+            monitor.run()
+        except KeyboardInterrupt:
+            pass
+        except Exception as e:
+            console.print(f"\n[red]Error: {e}[/red]")
+            input("\nPress Enter to continue...")
     
     def job_monitor(self):
         """Unified job monitoring system"""
