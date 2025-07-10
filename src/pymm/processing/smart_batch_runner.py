@@ -14,7 +14,7 @@ from rich import box
 
 from ..core.config import PyMMConfig
 from ..core.file_tracker import UnifiedFileTracker
-from .validated_batch_runner import ValidatedBatchRunner
+from .validated_batch_runner import ValidatedBatchRunner, ValidationResult
 
 console = Console()
 
@@ -283,9 +283,8 @@ class SmartBatchRunner(ValidatedBatchRunner):
         self.input_dir = self.tracker.input_dir
         self.output_dir = self.tracker.output_dir
         
-        # Ask about background processing if not specified
-        if background is None:
-            background = Confirm.ask("\nRun processing in background?", default=False)
+        # Ask about background processing
+        background = Confirm.ask("\nRun processing in background?", default=False)
         
         # Ask about memory system
         current_memory = self.config.get("memory_system", "standard")
@@ -363,35 +362,74 @@ class SmartBatchRunner(ValidatedBatchRunner):
         console.print("\n[bold green]Starting smart batch processing...[/bold green]\n")
         
         if background:
-            # Run in background
-            import threading
+            # Run in background using nohup
             import subprocess
             import sys
-            
-            console.print("[yellow]Starting background processing...[/yellow]")
-            console.print("Monitor progress with: pymm status")
-            console.print("View logs with: pymm logs")
-            
-            # Create background process
-            cmd = [sys.executable, "-m", "pymm.cli.main", "batch", "--background-worker"]
-            
-            # Pass files as argument
             import json
-            files_json = json.dumps([str(f) for f in files_to_process])
-            cmd.extend(["--files", files_json])
             
-            # Start background process
-            subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True
-            )
+            console.print("\n[yellow]Starting background processing...[/yellow]")
+            console.print("[dim]The process will continue running even if you close this session[/dim]")
+            console.print("\nMonitor progress with: [cyan]pymm monitor[/cyan]")
+            console.print("View logs in: [cyan]pymm_data/logs/[/cyan]\n")
+            
+            # Save the current state for background processing
+            state_file = self.tracker.base_dir / "background_state.json"
+            state = {
+                "files": [str(f) for f in files_to_process],
+                "config": self.config.to_dict(),
+                "timestamp": datetime.now().isoformat()
+            }
+            state_file.write_text(json.dumps(state, indent=2))
+            
+            # Create a Python script to run in background
+            script_path = self.tracker.base_dir / "background_runner.py"
+            script_content = f'''#!/usr/bin/env python3
+import sys
+import json
+from pathlib import Path
+from pymm.processing.smart_batch_runner import SmartBatchRunner
+from pymm.core.config import PyMMConfig
+
+# Load state
+state_file = Path("{state_file}")
+state = json.loads(state_file.read_text())
+files = [Path(f) for f in state["files"]]
+
+# Create config
+config = PyMMConfig()
+for key, value in state["config"].items():
+    config.set(key, value)
+
+# Run processing
+runner = SmartBatchRunner(config)
+runner.process_files_with_tracker(files)
+'''
+            script_path.write_text(script_content)
+            script_path.chmod(0o755)
+            
+            # Start background process using nohup
+            log_file = self.tracker.base_dir / "logs" / f"background_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+            log_file.parent.mkdir(exist_ok=True)
+            
+            cmd = ["nohup", sys.executable, str(script_path)]
+            with open(log_file, 'w') as log:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                    cwd=str(self.tracker.base_dir)
+                )
+            
+            console.print(f"[green]Background process started with PID: {process.pid}[/green]")
+            console.print(f"[dim]Log file: {log_file}[/dim]")
             
             return {
                 "status": "started_background",
                 "message": "Processing started in background",
-                "files": len(files_to_process)
+                "files": len(files_to_process),
+                "pid": process.pid,
+                "log_file": str(log_file)
             }
         
         # Process files with tracking
@@ -496,3 +534,42 @@ class SmartBatchRunner(ValidatedBatchRunner):
             return len(df)
         except:
             return 0
+    
+    def process_files_with_tracker(self, files_to_process: List[Path]):
+        """Process files and update tracker - for background processing"""
+        # Create processor
+        from ..processor import FileProcessor
+        processor = FileProcessor(self.config)
+        
+        # Process each file
+        for file_path in files_to_process:
+            try:
+                # Calculate output path
+                relative_path = file_path.relative_to(self.tracker.input_dir)
+                output_path = self.tracker.output_dir / relative_path
+                output_path = output_path.with_suffix('.csv')
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Process file
+                start_time = time.time()
+                success, processing_time, error_msg = processor.process_file(str(file_path))
+                
+                if success:
+                    # The actual output file created by processor
+                    actual_output = Path(output_path).parent / f"{file_path.stem}.csv"
+                    
+                    # Count concepts in output
+                    concepts_found = self._count_concepts_in_csv(str(actual_output))
+                    processing_time = time.time() - start_time
+                    
+                    self.tracker.mark_file_completed(
+                        file_path,
+                        concepts_found,
+                        processing_time
+                    )
+                else:
+                    self.tracker.mark_file_failed(file_path, error_msg or "Processing failed")
+                    
+            except Exception as e:
+                error_msg = str(e)
+                self.tracker.mark_file_failed(file_path, error_msg)

@@ -391,7 +391,7 @@ class ResumeRetryManager:
                 self.log_dir.mkdir(parents=True, exist_ok=True)
                 
             # Clear job history
-            self.job_manager.cleanup_old_jobs(older_than_hours=0)
+            self.job_manager.cleanup_old_jobs(days=0)
             
             # Reset manifest
             if self.tracker:
