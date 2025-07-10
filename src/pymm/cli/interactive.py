@@ -41,7 +41,7 @@ from ..processing.ultra_optimized_runner import UltraOptimizedBatchRunner
 from ..processing.pool_manager import AdaptivePoolManager
 from .analysis import ConceptAnalyzer
 from .enhanced_analysis import EnhancedConceptAnalyzer
-from .enhanced_monitor import EnhancedMonitor, run_enhanced_monitor
+from .unified_monitor import UnifiedMonitor
 
 console = Console()
 
@@ -110,7 +110,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.7.8[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v8.8.9[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1276,15 +1276,13 @@ class UltimateInteractiveNavigator:
             
             menu_items = [
                 ("1", "Quick Process", COLORS['success']),
-                ("2", "File Explorer", COLORS['info']),
+                ("2", "Monitor", "cyan"),
                 ("3", "Batch Process", COLORS['primary']),
                 ("4", "View Results", COLORS['secondary']),
                 ("5", "Analysis Tools", "magenta"),
                 ("6", "Configuration", COLORS['warning']),
                 ("7", "Server Control", COLORS['error']),
-                ("8", "Enhanced Monitor", "cyan"),
-                ("9", "Resume/Retry", "yellow"),
-                ("*", "Logs & Monitor", "white"),
+                ("8", "Resume/Retry", "yellow"),
                 ("0", "Help", "dim"),
                 ("Q", "Quit", "dim")
             ]
@@ -1326,7 +1324,7 @@ class UltimateInteractiveNavigator:
         if choice == "1":
             self.quick_process()
         elif choice == "2":
-            self.file_explorer()
+            self.monitor()
         elif choice == "3":
             self.batch_process()
         elif choice == "4":
@@ -1338,11 +1336,7 @@ class UltimateInteractiveNavigator:
         elif choice == "7":
             self.server_control()
         elif choice == "8":
-            self.enhanced_monitor()
-        elif choice == "9":
             self.resume_retry()
-        elif choice == "*":
-            self.logs_monitor()
         elif choice == "0":
             self.show_help()
         elif choice == "q":
@@ -3470,27 +3464,32 @@ Output Directory: {output_path}"""
         job_id = self.background_processor.start_background_process(input_dir, output_dir)
         console.print(f"\n[green]Started background job: {job_id}[/green]")
     
-    def enhanced_monitor(self):
-        """Launch enhanced monitor with integrated file explorer and job management"""
+    def monitor(self):
+        """Launch unified monitor with all features"""
         self.clear_screen()
         console.print(Panel(
-            "[bold]Enhanced Monitor[/bold]\nIntegrated file explorer with live job monitoring",
+            "[bold]Unified Monitor[/bold]\nAll-in-one monitoring and management interface",
             box=box.DOUBLE,
             style="cyan"
         ))
         
-        console.print("\n[yellow]Launching enhanced monitor...[/yellow]")
-        console.print("[dim]This includes:[/dim]")
-        console.print("[dim]• File explorer with quick process[/dim]")
-        console.print("[dim]• Live job monitoring[/dim]")
-        console.print("[dim]• System resource monitoring[/dim]")
-        console.print("[dim]• Job management (cancel/kill)[/dim]")
-        console.print("\n[dim]Press Q to return[/dim]")
+        console.print("\n[yellow]Launching unified monitor...[/yellow]")
+        console.print("\n[bold]Features:[/bold]")
+        console.print("• [cyan]Dashboard view[/cyan] - See everything at once")
+        console.print("• [cyan]Job monitoring[/cyan] - View and manage all jobs")
+        console.print("• [cyan]File explorer[/cyan] - Browse and quick process files")
+        console.print("• [cyan]Log viewer[/cyan] - View all system logs")
+        console.print("• [cyan]System resources[/cyan] - Real-time resource monitoring")
+        console.print("\n[bold]Navigation:[/bold]")
+        console.print("• Press [cyan]1-5[/cyan] to switch views")
+        console.print("• Press [cyan]Tab[/cyan] to switch panes in dashboard")
+        console.print("• Press [cyan]Q[/cyan] to return to main menu")
+        console.print("\n[dim]Starting in 2 seconds...[/dim]")
         time.sleep(2)
         
         try:
-            # Launch enhanced monitor
-            monitor = EnhancedMonitor(self.config)
+            # Launch unified monitor
+            monitor = UnifiedMonitor(self.config)
             monitor.run()
         except KeyboardInterrupt:
             pass
@@ -4070,9 +4069,9 @@ Output: {job.output_dir}
 
 ### File Processing
 - **Quick Process**: Smart defaults for immediate processing
-- **File Explorer**: Visual file browser with preview
-- **Batch Process**: Handle large datasets efficiently
-- **Background Jobs**: Process files without blocking
+- **Monitor**: Unified interface with file explorer, job management, and system monitoring
+- **Batch Process**: Handle large datasets efficiently with background support
+- **Resume/Retry**: Continue interrupted processing or retry failed files
 
 ### Analysis Tools
 - **Concept Frequency**: Analyze most common medical concepts
@@ -4081,11 +4080,16 @@ Output: {job.output_dir}
 - **Search**: Find specific concepts across files
 - **Word Cloud**: Visual representation of concepts
 
+### Monitor Features (Press 2)
+- **Dashboard View**: See everything at once in split-screen
+- **Job Management**: View active jobs, cancel/kill operations
+- **File Explorer**: Browse directories, select and quick process files
+- **Log Viewer**: View processing and server logs in real-time
+- **System Resources**: CPU, memory, disk, and network monitoring
+
 ### Advanced Features
-- **Resume/Retry**: Continue interrupted processing
 - **Server Control**: Manage MetaMap services
-- **Resource Monitor**: Track system performance
-- **Logs**: Detailed processing and error logs
+- **Configuration**: System setup and optimization
 
 ## Keyboard Shortcuts
 - **Arrow Keys**: Navigate in file browser
