@@ -14,8 +14,14 @@ from ..server.manager import ServerManager
 from ..processing.batch_runner import BatchRunner
 from .commands import server_group, config_group, stats_group, monitor, retry, retry_failed, chunked_process_cmd
 from .interactive import interactive_ultimate as interactive_mode
-from .analysis import analysis_group
-from .enhanced_analysis import enhanced_analysis_group
+try:
+    from .analysis import analysis_group
+except ImportError:
+    analysis_group = None
+try:
+    from .enhanced_analysis import enhanced_analysis_group
+except ImportError:
+    enhanced_analysis_group = None
 
 console = Console()
 
@@ -27,11 +33,11 @@ ASCII_BANNER = r"""[bold cyan]
  |  __/| |_| | |  | || |  | |
  |_|    \__, |_|  |_||_|  |_|
         |___/                 [/bold cyan]
-[dim]Python MetaMap Orchestrator v8.4.4[/dim]
+[dim]Python MetaMap Orchestrator v9.4.2[/dim]
 """
 
 @click.group(invoke_without_command=True)
-@click.version_option(version='8.4.4', prog_name='pymm')
+@click.version_option(version='9.4.2', prog_name='pymm')
 @click.option('--interactive', '-i', is_flag=True, help='Launch interactive mode')
 @click.pass_context
 def cli(ctx, interactive):
@@ -299,8 +305,10 @@ def interactive():
 cli.add_command(server_group, name='server')
 cli.add_command(config_group, name='config')
 cli.add_command(stats_group, name='stats')
-cli.add_command(analysis_group, name='analysis')
-cli.add_command(enhanced_analysis_group, name='enhanced-analysis')
+if analysis_group:
+    cli.add_command(analysis_group, name='analysis')
+if enhanced_analysis_group:
+    cli.add_command(enhanced_analysis_group, name='enhanced-analysis')
 cli.add_command(monitor)
 cli.add_command(retry)
 cli.add_command(retry_failed)

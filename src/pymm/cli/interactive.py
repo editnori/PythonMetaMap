@@ -40,8 +40,17 @@ from ..processing.optimized_batch_runner import OptimizedBatchRunner
 from ..processing.ultra_optimized_runner import UltraOptimizedBatchRunner
 from ..processing.monitored_batch_runner import MonitoredBatchRunner, InteractiveMonitoredRunner
 from ..processing.pool_manager import AdaptivePoolManager
-from .analysis import ConceptAnalyzer
-from .enhanced_analysis import EnhancedConceptAnalyzer
+try:
+    from .analysis import ConceptAnalyzer
+    HAS_ANALYSIS = True
+except ImportError as e:
+    print(f"Warning: Analysis features unavailable: {e}")
+    ConceptAnalyzer = None
+    HAS_ANALYSIS = False
+try:
+    from .enhanced_analysis import EnhancedConceptAnalyzer
+except ImportError:
+    EnhancedConceptAnalyzer = None
 from .unified_monitor import UnifiedMonitor
 from .enhanced_unified_monitor import EnhancedUnifiedMonitor
 from ..monitoring.unified_monitor import UnifiedMonitor as EnhancedMonitor
@@ -113,7 +122,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Python MetaMap CLI v9.4.0[/dim]"""
+            [dim]Python MetaMap CLI v9.4.2[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -930,8 +939,8 @@ class AnalysisTools:
     
     def __init__(self, output_dir: Path):
         self.output_dir = output_dir
-        self.analyzer = ConceptAnalyzer(output_dir)
-        self.clinical_analyzer = EnhancedConceptAnalyzer(output_dir)
+        self.analyzer = ConceptAnalyzer(output_dir) if HAS_ANALYSIS else None
+        self.clinical_analyzer = EnhancedConceptAnalyzer(output_dir) if EnhancedConceptAnalyzer else None
         
     def concept_frequency_analysis(self) -> Table:
         """Analyze concept frequencies across all files"""

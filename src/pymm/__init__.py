@@ -42,7 +42,14 @@ from .processing import (
 )
 
 # Import CLI
-from .cli import cli
+# Delay CLI import to avoid scipy issues on some systems
+cli = None
+def get_cli():
+    global cli
+    if cli is None:
+        from .cli import cli as _cli
+        cli = _cli
+    return cli
 
 __all__ = [
     # Original components
@@ -74,11 +81,12 @@ __all__ = [
     'FileProcessor',
     
     # CLI
-    'cli'
+    'cli',
+    'get_cli'
 ]
 
 # Version information
-__version__ = '9.4.1'
+__version__ = '9.4.2'
 __author__ = 'Dr. Layth Qassem, PharmD, MS'
 __email__ = 'layth.qassem@vanderbilt.edu, layth888.qassem@vumc.org'
 
