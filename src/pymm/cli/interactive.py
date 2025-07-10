@@ -42,6 +42,7 @@ from ..processing.pool_manager import AdaptivePoolManager
 from .analysis import ConceptAnalyzer
 from .enhanced_analysis import EnhancedConceptAnalyzer
 from .unified_monitor import UnifiedMonitor
+from .enhanced_unified_monitor import EnhancedUnifiedMonitor
 
 console = Console()
 
@@ -1841,25 +1842,33 @@ Throughput: {throughput:.2f} files/s"""
             input("\nPress Enter to continue...")
                     
     def batch_process(self):
-        """Advanced batch processing with full control"""
+        """Advanced batch processing with smart file tracking"""
         self.clear_screen()
         console.print(Panel(
-            "[bold]Batch Processing[/bold]\nFull control over MetaMap processing",
+            "[bold]Smart Batch Processing[/bold]\nIntelligent file tracking with automatic detection of processed files",
             box=box.DOUBLE,
             style=COLORS['success']
         ))
-        
-        # Check server
-        if not self.server_manager.is_running():
-            console.print("\n[yellow]MetaMap server not running[/yellow]")
-            if Confirm.ask("Start server now?", default=True):
-                self._start_server_visual()
-            else:
-                input("\nPress Enter to continue...")
-                return
                 
-        # Get directories
-        console.print("\n[bold]Processing Configuration[/bold]")
+        # Check if using unified tracking
+        if self.config.get('use_unified_tracking', True):
+            # Use smart batch runner with unified tracking
+            from ..processing.smart_batch_runner import SmartBatchRunner
+            
+            console.print("\n[cyan]Using unified file tracking system[/cyan]")
+            console.print("[dim]All files are tracked in: pymm_data/[/dim]\n")
+            
+            smart_runner = SmartBatchRunner(self.config)
+            result = smart_runner.run_smart_processing()
+            
+            if result['status'] == 'completed':
+                console.print(f"\n[green]✅ Successfully processed {result['processed']} files![/green]")
+            
+            input("\nPress Enter to continue...")
+            return
+            
+        # Fall back to traditional directory selection
+        console.print("\n[bold]Traditional Processing Mode[/bold]")
         
         input_dir = Prompt.ask(
             "Input directory",
@@ -1870,6 +1879,19 @@ Throughput: {throughput:.2f} files/s"""
             "Output directory", 
             default=self.config.get('default_output_dir', './output_csvs')
         )
+        
+        # Use validated batch runner for comprehensive validation
+        from ..processing.validated_batch_runner import ValidatedBatchRunner
+        validator = ValidatedBatchRunner(input_dir, output_dir, self.config)
+        
+        # Run validation
+        validation = validator.validate_environment()
+        passed = validator.display_validation_results(validation)
+        
+        if not passed:
+            if not Confirm.ask("\n[yellow]Validation failed. Continue anyway?[/yellow]", default=False):
+                input("\nPress Enter to continue...")
+                return
         
         # Advanced options
         console.print("\n[bold]Advanced Options[/bold]")
@@ -2883,15 +2905,29 @@ Output Directory: {output_path}"""
             ))
             
             # Current configuration
-            config_items = [
-                ("MetaMap Binary", self.config.get('metamap_binary_path', 'Not set')),
-                ("Java Home", self.config.get('java_home', 'Auto-detect')),
-                ("Workers", str(self.config.get('max_parallel_workers', 4))),
-                ("Chunk Size", str(self.config.get('chunk_size', 500))),
-                ("Timeout", f"{self.config.get('pymm_timeout', 300)}s"),
-                ("Input Dir", self.config.get('default_input_dir', './input_notes')),
-                ("Output Dir", self.config.get('default_output_dir', './output_csvs'))
-            ]
+            use_unified = self.config.get('use_unified_tracking', True)
+            if use_unified:
+                base_dir = self.config.get('base_data_dir', './pymm_data')
+                config_items = [
+                    ("MetaMap Binary", self.config.get('metamap_binary_path', 'Not set')),
+                    ("Java Home", self.config.get('java_home', 'Auto-detect')),
+                    ("Workers", str(self.config.get('max_parallel_workers', 4))),
+                    ("Chunk Size", str(self.config.get('chunk_size', 500))),
+                    ("Timeout", f"{self.config.get('pymm_timeout', 300)}s"),
+                    ("File Tracking", "✅ Unified"),
+                    ("Data Directory", base_dir)
+                ]
+            else:
+                config_items = [
+                    ("MetaMap Binary", self.config.get('metamap_binary_path', 'Not set')),
+                    ("Java Home", self.config.get('java_home', 'Auto-detect')),
+                    ("Workers", str(self.config.get('max_parallel_workers', 4))),
+                    ("Chunk Size", str(self.config.get('chunk_size', 500))),
+                    ("Timeout", f"{self.config.get('pymm_timeout', 300)}s"),
+                    ("File Tracking", "❌ Traditional"),
+                    ("Input Dir", self.config.get('default_input_dir', './input_notes')),
+                    ("Output Dir", self.config.get('default_output_dir', './output_csvs'))
+                ]
             
             config_table = Table(title="Current Configuration", box=box.ROUNDED)
             config_table.add_column("Setting", style="cyan")
@@ -3100,26 +3136,62 @@ Output Directory: {output_path}"""
         """Configure directories"""
         console.print("\n[bold]Directory Configuration[/bold]")
         
-        input_dir = Prompt.ask(
-            "Input directory",
-            default=self.config.get('default_input_dir', './input_notes')
+        # Ask about unified tracking
+        use_unified = Confirm.ask(
+            "Use unified file tracking system?",
+            default=self.config.get('use_unified_tracking', True)
         )
         
-        output_dir = Prompt.ask(
-            "Output directory",
-            default=self.config.get('default_output_dir', './output_csvs')
-        )
-        
-        # Validate directories
-        for name, path in [("Input", input_dir), ("Output", output_dir)]:
-            p = Path(path)
-            if not p.exists():
-                if Confirm.ask(f"{name} directory doesn't exist. Create it?", default=True):
-                    p.mkdir(parents=True, exist_ok=True)
-                    console.print(f"[green]Created {path}[/green]")
-                    
-        self.config.set('default_input_dir', input_dir)
-        self.config.set('default_output_dir', output_dir)
+        if use_unified:
+            console.print("\n[cyan]Unified tracking keeps all files organized in one location[/cyan]")
+            console.print("[cyan]and tracks which files have been processed automatically.[/cyan]\n")
+            
+            base_dir = Prompt.ask(
+                "Base data directory",
+                default=self.config.get('base_data_dir', './pymm_data')
+            )
+            
+            # Create unified structure
+            base_path = Path(base_dir)
+            input_path = base_path / 'input'
+            output_path = base_path / 'output'
+            
+            for path in [base_path, input_path, output_path]:
+                path.mkdir(parents=True, exist_ok=True)
+                
+            console.print(f"\n[green]✓ Created unified structure:[/green]")
+            console.print(f"  📁 {base_dir}/")
+            console.print(f"    📁 input/   (place your text files here)")
+            console.print(f"    📁 output/  (processed CSV files)")
+            console.print(f"    📄 processing_manifest.json")
+            
+            self.config.set('use_unified_tracking', True)
+            self.config.set('base_data_dir', base_dir)
+            
+        else:
+            # Traditional separate directories
+            input_dir = Prompt.ask(
+                "Input directory",
+                default=self.config.get('default_input_dir', './input_notes')
+            )
+            
+            output_dir = Prompt.ask(
+                "Output directory",
+                default=self.config.get('default_output_dir', './output_csvs')
+            )
+            
+            # Validate directories
+            for name, path in [("Input", input_dir), ("Output", output_dir)]:
+                p = Path(path)
+                if not p.exists():
+                    if Confirm.ask(f"{name} directory doesn't exist. Create it?", default=True):
+                        p.mkdir(parents=True, exist_ok=True)
+                        console.print(f"[green]Created {path}[/green]")
+                        
+            self.config.set('default_input_dir', input_dir)
+            self.config.set('default_output_dir', output_dir)
+            self.config.set('use_unified_tracking', False)
+            
         self.config.save()
         
         console.print("\n[green]Directories configured![/green]")
@@ -3552,31 +3624,33 @@ Output Directory: {output_path}"""
         console.print(f"\n[green]Started background job: {job_id}[/green]")
     
     def monitor(self):
-        """Launch unified monitor with all features"""
+        """Launch enhanced unified monitor with interactive features"""
         self.clear_screen()
         console.print(Panel(
-            "[bold]Unified Monitor[/bold]\nAll-in-one monitoring and management interface",
+            "[bold]Enhanced Unified Monitor[/bold]\nInteractive monitoring with file management and job control",
             box=box.DOUBLE,
             style="cyan"
         ))
         
-        console.print("\n[yellow]Launching unified monitor...[/yellow]")
-        console.print("\n[bold]Features:[/bold]")
-        console.print("• [cyan]Dashboard view[/cyan] - See everything at once")
-        console.print("• [cyan]Job monitoring[/cyan] - View and manage all jobs")
-        console.print("• [cyan]File explorer[/cyan] - Browse and quick process files")
-        console.print("• [cyan]Log viewer[/cyan] - View all system logs")
-        console.print("• [cyan]System resources[/cyan] - Real-time resource monitoring")
+        console.print("\n[yellow]Launching enhanced monitor...[/yellow]")
+        console.print("\n[bold]Enhanced Features:[/bold]")
+        console.print("• [cyan]Interactive job management[/cyan] - Click to view outputs")
+        console.print("• [cyan]File operations[/cyan] - Delete files/folders")
+        console.print("• [cyan]Quick process[/cyan] - Process selected files instantly")
+        console.print("• [cyan]CSV preview[/cyan] - View processed results")
+        console.print("• [cyan]Job progress tracking[/cyan] - File-by-file progress")
         console.print("\n[bold]Navigation:[/bold]")
         console.print("• Press [cyan]1-5[/cyan] to switch views")
         console.print("• Press [cyan]Tab[/cyan] to switch panes in dashboard")
+        console.print("• Press [cyan]Enter/O[/cyan] on jobs to open output")
+        console.print("• Press [cyan]Delete/X[/cyan] on files to delete")
         console.print("• Press [cyan]Q[/cyan] to return to main menu")
         console.print("\n[dim]Starting in 2 seconds...[/dim]")
         time.sleep(2)
         
         try:
-            # Launch unified monitor
-            monitor = UnifiedMonitor(self.config)
+            # Launch enhanced unified monitor
+            monitor = EnhancedUnifiedMonitor(self.config)
             monitor.run()
         except KeyboardInterrupt:
             pass
@@ -3767,138 +3841,11 @@ Output: {job.output_dir}
                 continue  # Refresh
         
     def resume_retry(self):
-        """Resume or retry failed processing"""
-        self.clear_screen()
-        console.print(Panel(
-            "[bold]Resume/Retry[/bold]\nContinue interrupted processing",
-            box=box.DOUBLE,
-            style="yellow"
-        ))
+        """Enhanced resume/retry manager with TUI"""
+        from .resume_manager import ResumeRetryManager
         
-        # Look for state files
-        output_dir = Path(self.config.get('default_output_dir', './output_csvs'))
-        state_files = list(output_dir.glob(".processing_state*.json"))
-        
-        if not state_files:
-            console.print("\n[yellow]No interrupted sessions found[/yellow]")
-            
-            # Check for failed files in logs
-            log_dir = output_dir / "logs"
-            if log_dir.exists():
-                console.print("\n[dim]Checking logs for failed files...[/dim]")
-                
-                # Analyze logs for failures
-                failed_files = []
-                log_files = sorted(log_dir.glob("batch_run_*.log"), reverse=True)[:5]  # Check last 5 runs
-                
-                for log_file in log_files:
-                    try:
-                        with open(log_file, 'r') as f:
-                            content = f.read()
-                            # Look for error patterns
-                            for line in content.splitlines():
-                                if "ERROR" in line and ".txt" in line:
-                                    # Extract filename from error message
-                                    import re
-                                    match = re.search(r'(\w+\.txt)', line)
-                                    if match:
-                                        failed_files.append(match.group(1))
-                                elif "Failed to process" in line:
-                                    match = re.search(r'Failed to process (\S+\.txt)', line)
-                                    if match:
-                                        failed_files.append(match.group(1))
-                    except:
-                        continue
-                
-                if failed_files:
-                    failed_files = list(set(failed_files))  # Remove duplicates
-                    console.print(f"\n[yellow]Found {len(failed_files)} failed files in recent logs[/yellow]")
-                    
-                    # Show failed files
-                    failed_table = Table(title="Failed Files", box=box.ROUNDED)
-                    failed_table.add_column("Filename", style="red")
-                    
-                    for file in failed_files[:10]:  # Show first 10
-                        failed_table.add_row(file)
-                    
-                    if len(failed_files) > 10:
-                        failed_table.add_row(f"... and {len(failed_files) - 10} more")
-                    
-                    console.print(failed_table)
-                    
-                    # Ask if they want to retry these files
-                    if Confirm.ask("\nRetry these failed files?", default=True):
-                        # Create a retry list file
-                        retry_file = output_dir / "retry_files.txt"
-                        with open(retry_file, 'w') as f:
-                            for file in failed_files:
-                                f.write(f"{file}\n")
-                        
-                        console.print(f"\n[green]Created retry file list: {retry_file}[/green]")
-                        console.print("[cyan]Use this with batch processing to retry only failed files[/cyan]")
-                else:
-                    console.print("[green]No failed files found in recent logs[/green]")
-                
-            input("\nPress Enter to continue...")
-            return
-            
-        # Show sessions
-        session_table = Table(title="Interrupted Sessions", box=box.ROUNDED)
-        session_table.add_column("#", width=3)
-        session_table.add_column("Session", style="cyan")
-        session_table.add_column("Processed", justify="right", style="green")
-        session_table.add_column("Failed", justify="right", style="red")
-        session_table.add_column("Last Update", style="dim")
-        
-        sessions = []
-        for i, state_file in enumerate(state_files, 1):
-            try:
-                with open(state_file) as f:
-                    state = json.load(f)
-                    
-                sessions.append((state_file, state))
-                
-                session_table.add_row(
-                    str(i),
-                    state_file.name[:30],
-                    str(len(state.get('processed', []))),
-                    str(len(state.get('failed', []))),
-                    state.get('timestamp', 'Unknown')[:16]
-                )
-            except:
-                pass
-                
-        console.print(session_table)
-        
-        # Options
-        console.print("\n[1] Resume Processing")
-        console.print("[2] Retry Failed Files Only")
-        console.print("[3] View Session Details")
-        console.print("[4] Clear Session")
-        console.print("[B] Back")
-        
-        choice = Prompt.ask("\nSelect option", default="b").lower()
-        
-        if choice != "b" and sessions:
-            try:
-                session_num = IntPrompt.ask("Session number", default=1)
-                if 1 <= session_num <= len(sessions):
-                    state_file, state = sessions[session_num - 1]
-                    
-                    if choice == "1":
-                        self._resume_session(state_file, state)
-                    elif choice == "2":
-                        self._retry_failed_files(state_file, state)
-                    elif choice == "3":
-                        self._view_session_details(state)
-                    elif choice == "4":
-                        if Confirm.ask("\n[yellow]Clear this session?[/yellow]"):
-                            os.remove(state_file)
-                            console.print("[green]Session cleared[/green]")
-            except:
-                pass
-                
-        input("\nPress Enter to continue...")
+        manager = ResumeRetryManager(self.config)
+        manager.run()
         
     def logs_monitor(self):
         """View logs and monitoring data"""

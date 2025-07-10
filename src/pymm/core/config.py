@@ -141,7 +141,9 @@ class PyMMConfig:
         "use_instance_pool": None,  # Auto-detect based on CPU
         "metamap_instance_count": None,  # Auto-detect
         "default_input_dir": "./input_notes",
-        "default_output_dir": "./output_csvs"
+        "default_output_dir": "./output_csvs",
+        "base_data_dir": "./pymm_data",  # Unified data directory
+        "use_unified_tracking": True      # Use unified file tracking system
     }
     
     def __init__(self):
