@@ -38,11 +38,13 @@ from ..core.enhanced_state import AtomicStateManager, FileTracker
 from ..server.manager import ServerManager
 from ..processing.optimized_batch_runner import OptimizedBatchRunner
 from ..processing.ultra_optimized_runner import UltraOptimizedBatchRunner
+from ..processing.monitored_batch_runner import MonitoredBatchRunner, InteractiveMonitoredRunner
 from ..processing.pool_manager import AdaptivePoolManager
 from .analysis import ConceptAnalyzer
 from .enhanced_analysis import EnhancedConceptAnalyzer
 from .unified_monitor import UnifiedMonitor
 from .enhanced_unified_monitor import EnhancedUnifiedMonitor
+from ..monitoring.unified_monitor import UnifiedMonitor as EnhancedMonitor
 
 console = Console()
 
@@ -1528,82 +1530,40 @@ Mode: {'Ultra' if file_count > 500 else 'Standard'}"""
         console.print(Columns(config_panels))
         
     def _run_processing_visual(self, input_dir: str, output_dir: str, files: List[Path]):
-        """Run processing with rich visual feedback"""
+        """Run processing with enhanced real-time monitoring"""
         self.clear_screen()
         
-        # Setup
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
+        # Create interactive monitored runner
+        interactive_runner = InteractiveMonitoredRunner(self.config)
         
-        monitor = ProcessingMonitor(output_path)
-        monitor.stats['total'] = len(files)
-        monitor.stats['start_time'] = datetime.now()
-        
-        # Choose runner
-        if len(files) > 500:
-            runner = UltraOptimizedBatchRunner(input_dir, output_dir, self.config)
-            monitor.log("Using ultra-optimized runner for large dataset")
-        else:
-            runner = OptimizedBatchRunner(input_dir, output_dir, self.config)
-            monitor.log("Using standard optimized runner")
-            
-        # Create live display
-        layout = Layout()
-        layout.split_column(
-            Layout(name="header", size=3),
-            Layout(name="main", ratio=1),
-            Layout(name="footer", size=1)
-        )
-        
-        # Header
-        header = Panel(
-            "[bold]Processing Medical Texts[/bold]",
+        # Show initial message
+        console.print(Panel(
+            "[bold cyan]Starting Enhanced Processing Monitor[/bold cyan]\n\n"
+            "Features:\n"
+            "• Real-time progress bars for each file\n"
+            "• Live logging with filtering\n"
+            "• Resource usage monitoring\n"
+            "• Output file explorer\n"
+            "• Global statistics dashboard\n\n"
+            "[dim]The monitor will start automatically...[/dim]",
             box=box.DOUBLE,
-            style=COLORS['primary']
-        )
-        layout["header"].update(header)
+            style="cyan"
+        ))
         
-        # Footer
-        footer = Text("[dim]Press Ctrl+C to cancel[/dim]", justify="center")
-        layout["footer"].update(footer)
+        time.sleep(2)  # Brief pause to show message
         
-        # Run with live display
-        with Live(layout, refresh_per_second=2) as live:
-            def update_display(stats):
-                # Update monitor stats
-                monitor.update_stats(**stats)
-                
-                if 'current_file' in stats:
-                    monitor.log(f"Processing: {stats['current_file']}", file=stats['current_file'])
-                    
-                # Update main display
-                main_layout = Layout()
-                main_layout.split_row(
-                    Layout(monitor.get_progress_panel(), ratio=2),
-                    Layout(self.resource_monitor.get_compact_status_panel(), ratio=1)
-                )
-                
-                layout["main"].update(main_layout)
-                
-            try:
-                results = runner.run(progress_callback=update_display)
-                
-                # Final update
-                monitor.log("Processing completed", "INFO")
-                
-                # Show results
-                self._show_processing_results(results, output_dir, monitor)
-                
-            except KeyboardInterrupt:
-                monitor.log("Processing interrupted by user", "WARNING")
-                console.print("\n\n[yellow]Processing interrupted[/yellow]")
-            except Exception as e:
-                monitor.log(f"Processing error: {e}", "ERROR")
-                console.print(f"\n\n[error]Processing error: {e}[/error]")
-                
-        # Export report
-        report_path = monitor.export_report()
-        console.print(f"\n[dim]Report saved to: {report_path}[/dim]")
+        try:
+            # Run with interactive monitoring
+            interactive_runner.run_interactive(
+                input_dir=input_dir,
+                output_dir=output_dir,
+                file_pattern="*.txt"
+            )
+            
+        except KeyboardInterrupt:
+            console.print("\n\n[yellow]Processing interrupted by user[/yellow]")
+        except Exception as e:
+            console.print(f"\n\n[error]Processing error: {e}[/error]")
         
         input("\nPress Enter to continue...")
         
@@ -3624,39 +3584,63 @@ Output Directory: {output_path}"""
         console.print(f"\n[green]Started background job: {job_id}[/green]")
     
     def monitor(self):
-        """Launch enhanced unified monitor with interactive features"""
+        """Launch enhanced real-time monitoring system"""
         self.clear_screen()
         console.print(Panel(
-            "[bold]Enhanced Unified Monitor[/bold]\nInteractive monitoring with file management and job control",
+            "[bold cyan]Enhanced Real-Time Monitor[/bold cyan]\n\n"
+            "Complete monitoring solution with live updates",
             box=box.DOUBLE,
             style="cyan"
         ))
         
-        console.print("\n[yellow]Launching enhanced monitor...[/yellow]")
-        console.print("\n[bold]Enhanced Features:[/bold]")
-        console.print("• [cyan]Interactive job management[/cyan] - Click to view outputs")
-        console.print("• [cyan]File operations[/cyan] - Delete files/folders")
-        console.print("• [cyan]Quick process[/cyan] - Process selected files instantly")
-        console.print("• [cyan]CSV preview[/cyan] - View processed results")
-        console.print("• [cyan]Job progress tracking[/cyan] - File-by-file progress")
-        console.print("\n[bold]Navigation:[/bold]")
-        console.print("• Press [cyan]1-5[/cyan] to switch views")
-        console.print("• Press [cyan]Tab[/cyan] to switch panes in dashboard")
-        console.print("• Press [cyan]Enter/O[/cyan] on jobs to open output")
-        console.print("• Press [cyan]Delete/X[/cyan] on files to delete")
-        console.print("• Press [cyan]Q[/cyan] to return to main menu")
-        console.print("\n[dim]Starting in 2 seconds...[/dim]")
-        time.sleep(2)
+        console.print("\n[bold]🚀 New Features:[/bold]")
+        console.print("• [green]Real-time progress bars[/green] - Live updates for each file")
+        console.print("• [yellow]Live logging[/yellow] - Filter and search logs in real-time")
+        console.print("• [blue]Resource monitoring[/blue] - CPU, memory, disk, network usage")
+        console.print("• [magenta]Output explorer[/magenta] - Browse results as they're created")
+        console.print("• [cyan]Statistics dashboard[/cyan] - Global processing metrics")
+        
+        console.print("\n[bold]📍 Navigation:[/bold]")
+        console.print("• Press [bold]d[/bold] for Dashboard view")
+        console.print("• Press [bold]p[/bold] for Progress tracking")
+        console.print("• Press [bold]l[/bold] for Live logs")
+        console.print("• Press [bold]r[/bold] for Resources")
+        console.print("• Press [bold]f[/bold] for Files explorer")
+        console.print("• Press [bold]s[/bold] for Statistics")
+        console.print("• Press [bold]q[/bold] to quit")
+        
+        console.print("\n[dim]Note: This monitor can also be used during batch processing[/dim]")
+        
+        if not Confirm.ask("\nLaunch enhanced monitor?", default=True):
+            return
         
         try:
-            # Launch enhanced unified monitor
-            monitor = EnhancedUnifiedMonitor(self.config)
-            monitor.run()
-        except KeyboardInterrupt:
-            pass
+            # Create and start the enhanced monitor
+            monitor = EnhancedMonitor([self.config.get('default_output_dir', './output_csvs')])
+            
+            # Add some sample log entries for demonstration
+            monitor.log("INFO", "Monitor", "Enhanced monitoring system started")
+            monitor.log("INFO", "System", f"Monitoring output directory: {self.config.get('default_output_dir', './output_csvs')}")
+            
+            # Start the monitor
+            monitor.start()
+            
+            console.print("\n[yellow]Monitor is running. Press Ctrl+C to stop.[/yellow]")
+            
+            # Keep it running until interrupted
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
+            
+            # Stop the monitor
+            monitor.stop()
+            
         except Exception as e:
             console.print(f"\n[red]Error: {e}[/red]")
-            input("\nPress Enter to continue...")
+            
+        input("\nPress Enter to continue...")
     
     def job_monitor(self):
         """Unified job monitoring system"""

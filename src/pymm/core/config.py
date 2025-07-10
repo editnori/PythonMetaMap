@@ -143,7 +143,9 @@ class PyMMConfig:
         "default_input_dir": "./input_notes",
         "default_output_dir": "./output_csvs",
         "base_data_dir": "./pymm_data",  # Unified data directory
-        "use_unified_tracking": True      # Use unified file tracking system
+        "use_unified_tracking": True,      # Use unified file tracking system
+        "memory_system": "standard",       # Memory system: standard, conservative, aggressive
+        "memory_limit_mb": None            # Optional memory limit in MB
     }
     
     def __init__(self):

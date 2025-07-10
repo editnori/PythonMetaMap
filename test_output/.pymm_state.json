@@ -1,0 +1,24 @@
+{
+  "started": "2025-07-10T11:57:26.421188",
+  "last_updated": "2025-07-10T12:15:30.465697",
+  "completed_files": [],
+  "failed_files": {},
+  "retry_queue": {},
+  "statistics": {
+    "total_files": 1,
+    "completed": 0,
+    "failed": 0,
+    "in_progress": 1,
+    "total_concepts": 0,
+    "unique_concepts": 0,
+    "total_semantic_types": 0
+  },
+  "concept_tracking": {
+    "concepts": {},
+    "semantic_types": {},
+    "top_concepts": [],
+    "top_semantic_types": []
+  },
+  "session_id": 5585,
+  "version": "8.0.8"
+}

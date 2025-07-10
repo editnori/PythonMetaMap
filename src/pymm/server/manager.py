@@ -114,6 +114,12 @@ class ServerManager:
         wsd_script = self.server_scripts_dir / "wsdserverctl"
         if wsd_script.exists():
             self._update_script_paths(wsd_script, "wsd")
+            
+        # Fix other MetaMap scripts
+        # self._fix_metamap_scripts()  # Method not implemented yet
+        
+        # Fix WSD server configuration
+        # self._fix_wsd_config()  # Method not implemented yet
     
     def _update_script_paths(self, script_path: Path, script_type: str):
         """Update paths in server control scripts"""
@@ -137,6 +143,63 @@ class ServerManager:
             self.logger.debug(f"Updated paths in {script_path}")
         except Exception as e:
             self.logger.warning(f"Failed to update {script_path}: {e}")
+    
+    def _fix_metamap_scripts(self):
+        """Fix paths in MetaMap main scripts"""
+        if not self.server_scripts_dir or not self.public_mm_dir:
+            return
+            
+        scripts_to_fix = ["metamap", "metamap20", "SKRrun.20", "metamap2020.TEMPLATE"]
+        
+        for script_name in scripts_to_fix:
+            script_path = self.server_scripts_dir / script_name
+            if script_path.exists():
+                try:
+                    content = script_path.read_text()
+                    
+                    # Update BASEDIR/MM_DISTRIB_DIR to current installation path
+                    content = re.sub(
+                        r'^(BASEDIR|MM_DISTRIB_DIR)=.*$', 
+                        f'\\1={self.public_mm_dir}', 
+                        content, 
+                        flags=re.MULTILINE
+                    )
+                    
+                    script_path.write_text(content)
+                    os.chmod(script_path, 0o755)
+                    self.logger.debug(f"Updated paths in {script_name}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to update {script_name}: {e}")
+    
+    def _fix_wsd_config(self):
+        """Fix paths in WSD server configuration files"""
+        if not self.public_mm_dir:
+            return
+            
+        wsd_config_dir = self.public_mm_dir / "WSD_Server" / "config"
+        if not wsd_config_dir.exists():
+            return
+            
+        # Fix disambServer.cfg
+        config_file = wsd_config_dir / "disambServer.cfg"
+        if config_file.exists():
+            try:
+                content = config_file.read_text()
+                
+                # Replace all hardcoded paths with current installation path
+                old_path_patterns = [
+                    r'/mnt/c/Users/[^/]+/[^/]+/PythonMetaMap/metamap_install/public_mm',
+                    r'/mnt/c/Users/Administrator/PythonMetaMap/metamap_install/public_mm',
+                    r'/mnt/c/Users/Layth M Qassem/Desktop/PythonMetaMap/metamap_install/public_mm'
+                ]
+                
+                for pattern in old_path_patterns:
+                    content = re.sub(pattern, str(self.public_mm_dir), content)
+                
+                config_file.write_text(content)
+                self.logger.debug("Updated paths in disambServer.cfg")
+            except Exception as e:
+                self.logger.warning(f"Failed to update disambServer.cfg: {e}")
     
     def _check_port_with_retry(self, port: int, max_retries: int = 30, delay: float = 1.0) -> bool:
         """Check if port is open with retries"""

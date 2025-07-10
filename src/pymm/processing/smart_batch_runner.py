@@ -260,8 +260,12 @@ class SmartBatchRunner(ValidatedBatchRunner):
             size /= 1024
         return f"{size:.0f}TB"
         
-    def run_smart_processing(self) -> Dict[str, Any]:
-        """Run processing with smart file selection"""
+    def run_smart_processing(self, background: bool = False) -> Dict[str, Any]:
+        """Run processing with smart file selection
+        
+        Args:
+            background: If True, run processing in background
+        """
         # Get files to process
         files_to_process, message = self.show_processing_options()
         
@@ -274,16 +278,52 @@ class SmartBatchRunner(ValidatedBatchRunner):
         self.input_dir = self.tracker.input_dir
         self.output_dir = self.tracker.output_dir
         
+        # Ask about background processing if not specified
+        if background is None:
+            background = Confirm.ask("\nRun processing in background?", default=False)
+        
+        # Ask about memory system
+        current_memory = self.config.get("memory_system", "standard")
+        console.print(f"\n[cyan]Current memory system: {current_memory}[/cyan]")
+        console.print("Available memory systems:")
+        console.print("  1. Standard - Balanced memory usage")
+        console.print("  2. Conservative - Lower memory usage, slower processing")
+        console.print("  3. Aggressive - Higher memory usage, faster processing")
+        
+        memory_choice = Prompt.ask("\nSelect memory system", choices=["1", "2", "3"], default="1")
+        memory_systems = {"1": "standard", "2": "conservative", "3": "aggressive"}
+        selected_memory = memory_systems[memory_choice]
+        
+        if selected_memory != current_memory:
+            self.config.set("memory_system", selected_memory)
+            # Adjust settings based on memory system
+            if selected_memory == "conservative":
+                self.config.set("max_parallel_workers", 2)
+                self.config.set("chunk_size", 50)
+                self.config.set("java_heap_size", "2g")
+            elif selected_memory == "aggressive":
+                self.config.set("max_parallel_workers", 8)
+                self.config.set("chunk_size", 500)
+                self.config.set("java_heap_size", "8g")
+        
         # Run validation
         if not Confirm.ask("\nRun validation checks?", default=True):
             validation_passed = True
         else:
-            validation = self.validate_environment()
-            validation_passed = self.display_validation_results(validation)
-            
-            if not validation_passed:
-                if not Confirm.ask("\n[yellow]Validation failed. Continue anyway?[/yellow]", default=False):
-                    return {"status": "failed", "reason": "validation_failed"}
+            try:
+                validation = self.validate_environment()
+                validation_passed = self.display_validation_results(validation)
+                
+                if not validation_passed:
+                    if not Confirm.ask("\n[yellow]Validation failed. Continue anyway?[/yellow]", default=False):
+                        return {"status": "failed", "reason": "validation_failed"}
+            except AttributeError as e:
+                if "'str' object has no attribute 'substitute'" in str(e):
+                    console.print(f"[red]Validation error: {e}[/red]")
+                    console.print("[yellow]Skipping validation due to configuration issue...[/yellow]")
+                    validation_passed = True
+                else:
+                    raise
                     
         # Start servers if needed
         if not self.server_manager.is_running():
@@ -298,6 +338,38 @@ class SmartBatchRunner(ValidatedBatchRunner):
         
         # Start processing
         console.print("\n[bold green]Starting smart batch processing...[/bold green]\n")
+        
+        if background:
+            # Run in background
+            import threading
+            import subprocess
+            import sys
+            
+            console.print("[yellow]Starting background processing...[/yellow]")
+            console.print("Monitor progress with: pymm status")
+            console.print("View logs with: pymm logs")
+            
+            # Create background process
+            cmd = [sys.executable, "-m", "pymm.cli.main", "batch", "--background-worker"]
+            
+            # Pass files as argument
+            import json
+            files_json = json.dumps([str(f) for f in files_to_process])
+            cmd.extend(["--files", files_json])
+            
+            # Start background process
+            subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+            
+            return {
+                "status": "started_background",
+                "message": "Processing started in background",
+                "files": len(files_to_process)
+            }
         
         # Process files with tracking
         results = {

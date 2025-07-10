@@ -382,11 +382,29 @@ def run_install_script():
         cmd = ["./" + os.path.basename(INST_SCRIPT)]
 
     if exists(INST_SCRIPT):
+        # Create .installrc file to automate the installation with current directory as BASEDIR
+        installrc_path = os.path.join(run_cwd, ".installrc")
+        print(f"[Install Script] Creating .installrc with BASEDIR={run_cwd}")
+        with open(installrc_path, 'w') as f:
+            f.write(f"export BASEDIR={run_cwd}\n")
+            f.write(f"export JAVA_HOME={os.environ.get('JAVA_HOME', '/usr/lib/jvm/java-11-openjdk-amd64')}\n")
+        
         print(f"[Install Script] Executing from directory: {run_cwd}")
         print(f"[Install Script] Command: {' '.join(cmd)}")
         subprocess.call(["chmod", "+x", INST_SCRIPT])
         try:
-            process = subprocess.Popen(cmd, cwd=run_cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+            # Run with environment variable to ensure non-interactive mode
+            env = os.environ.copy()
+            env['BASEDIR'] = run_cwd
+            process = subprocess.Popen(cmd, cwd=run_cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                     text=True, bufsize=1, stdin=subprocess.PIPE, env=env)
+            
+            # Provide input for the interactive prompts (in case .installrc doesn't work)
+            if process.stdin:
+                # Send empty line to accept default BASEDIR (which is set via env variable)
+                process.stdin.write('\n')
+                process.stdin.flush()
+                process.stdin.close()
             
             # Stream output with tqdm
             if process.stdout:
