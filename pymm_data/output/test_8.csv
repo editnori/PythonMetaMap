@@ -1,9 +1,5 @@
 META_BATCH_START_NOTE_ID:test_8.txt
 "CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
 "C0584135","-1000","Referral to endocrinologist","Referral to endocrinologist","Referral to endocrinologist","hlca","SNOMEDCT_US","0:27"
-"C0034927","-790","Referral","Patient referral","Referral to endocrinologist","hlca","CHV,LNC,MSH,MTH,NCI,NCI_CTRP,NCI_NCI-GLOSS,NCI_NICHD,NLMSubSyn,SNM,SNMI,SNOMEDCT_US","0:8"
-"C0259863","-623","Endocrinologist","Endocrinologists","Referral to endocrinologist","prog","CHV,LCH,LCH_NW,MSH,NCI,NCI_NCI-GLOSS,SNMI,SNOMEDCT_US","12:15"
-"C0034866","-1000","Recommended","Recommendation","recommended.","idcn","CHV,HL7V3.0,LNC,MTH,NCI","28:11"
-"C0584135","-1000","Referral to endocrinologist","Referral to endocrinologist","Referral to endocrinologist","hlca","SNOMEDCT_US","0:27"
 "C0034866","-1000","Recommended","Recommendation","recommended.","idcn","CHV,HL7V3.0,LNC,MTH,NCI","28:11"
 META_BATCH_END_NOTE_ID:test_8.txt

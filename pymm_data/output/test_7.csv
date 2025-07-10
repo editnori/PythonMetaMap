@@ -1,12 +1,5 @@
 META_BATCH_START_NOTE_ID:test_7.txt
 "CUI","Score","ConceptName","PrefName","Phrase","SemTypes","Sources","Position"
-"C0585361","-790","Twice Daily","Twice a day","Started on metformin 500mg twice daily.","tmco","CHV,MTH,NCI,NCI_CDISC,SNOMEDCT_US","27:11"
-"C0025598","-753","METFORMIN","metformin","Started on metformin 500mg twice daily.","orch,phsu","ATC,CHV,CSP,DRUGBANK,LCH_NW,LNC,MSH,MTH,MTHSPL,NCI,NCI_CTRP,NCI_FDA,NCI_NCI-GLOSS,RXNORM,SNOMEDCT_US,VANDF","11:9"
-"C0332173","-753","Daily","Daily","Started on metformin 500mg twice daily.","tmco","CHV,HL7V3.0,LNC,MTH,NCI,NCI_CDISC,NCI_UCUM,SNMI,SNOMEDCT_US","33:5"
-"C1272689","-753","Started","Started","Started on metformin 500mg twice daily.","qlco","CHV,MTH,SNOMEDCT_US","0:7"
-"C1720725","-753","Twice","Twice - dosing instruction fragment","Started on metformin 500mg twice daily.","inpr","MTH,SNOMEDCT_US","27:5"
-"C1948050","-753","TWICE","Twice (Numerical Qualifier)","Started on metformin 500mg twice daily.","qnco","LNC,MTH,NCI,NCI_CDISC","27:5"
-"C0439659","-719","Start","Beginning","Started on metformin 500mg twice daily.","tmco","CHV,LCH,LNC,MTH,NCI,SNOMEDCT_US","0:7"
 "C1272689","-753","Started","Started","Started on metformin 500mg twice daily.","qlco","CHV,MTH,SNOMEDCT_US","0:7"
 "C0025598","-753","METFORMIN","metformin","Started on metformin 500mg twice daily.","orch,phsu","ATC,CHV,CSP,DRUGBANK,LCH_NW,LNC,MSH,MTH,MTHSPL,NCI,NCI_CTRP,NCI_FDA,NCI_NCI-GLOSS,RXNORM,SNOMEDCT_US,VANDF","11:9"
 "C0585361","-790","Twice Daily","Twice a day","Started on metformin 500mg twice daily.","tmco","CHV,MTH,NCI,NCI_CDISC,SNOMEDCT_US","27:11"

@@ -33,7 +33,7 @@ class MonitoredBatchRunner:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize or create monitor
-        self.monitor = monitor or UnifiedMonitor([self.output_dir])
+        self.monitor = monitor or UnifiedMonitor([self.output_dir], config=config)
         self.owns_monitor = monitor is None  # Track if we created the monitor
         
         # Processing configuration
@@ -287,7 +287,8 @@ class InteractiveMonitoredRunner:
     
     def __init__(self, config: PyMMConfig):
         self.config = config
-        self.monitor = UnifiedMonitor()
+        output_dir = config.get('default_output_dir', './output_csvs')
+        self.monitor = UnifiedMonitor([Path(output_dir)], config=config)
         
     def run_interactive(self, input_dir: str, output_dir: str, file_pattern: str = "*.txt"):
         """Run batch processing with interactive monitoring"""

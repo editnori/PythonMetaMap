@@ -64,7 +64,7 @@ def simulate_processing(monitor: UnifiedMonitor):
 
 def main():
     """Run the monitoring demonstration"""
-    print("Enhanced Monitoring System Demo")
+    print("Monitoring System Demo")
     print("=" * 50)
     print("\nThis demo will show:")
     print("- Real-time progress tracking")
@@ -78,8 +78,9 @@ def main():
     # Create config
     config = PyMMConfig()
     
-    # Create monitor
-    monitor = UnifiedMonitor([Path("./output_csvs")])
+    # Create monitor with config
+    output_dir = config.get('default_output_dir', './output_csvs')
+    monitor = UnifiedMonitor([Path(output_dir)], config=config)
     
     # Start monitor
     monitor.start()
@@ -87,7 +88,7 @@ def main():
     try:
         # Add initial logs
         monitor.log("INFO", "System", "Starting monitoring demonstration")
-        monitor.log("INFO", "Config", f"Output directory: {config.get('default_output_dir', './output_csvs')}")
+        monitor.log("INFO", "Config", f"Output directory: {output_dir}")
         
         # Start simulated processing in background
         processing_thread = threading.Thread(
@@ -125,11 +126,11 @@ def main():
         print("\n" * 2)
         print("Demo completed!")
         print("\nKey features demonstrated:")
-        print("✓ Real-time progress bars for each file")
-        print("✓ Live logging with filtering capabilities")
-        print("✓ Resource monitoring (CPU, memory, disk)")
-        print("✓ Global statistics tracking")
-        print("✓ Unified dashboard view")
+        print("- Real-time progress bars for each file")
+        print("- Live logging with filtering capabilities")
+        print("- Resource monitoring (CPU, memory, disk)")
+        print("- Global statistics tracking")
+        print("- Unified dashboard view")
         
         # Show final stats
         stats = monitor.statistics_dashboard.global_stats

@@ -29,12 +29,21 @@ console = Console()
 class UnifiedMonitor:
     """Unified monitoring system bringing together all monitoring components"""
     
-    def __init__(self, output_dirs: List[Path] = None):
+    def __init__(self, output_dirs: List[Path] = None, config = None):
         # Initialize all components
+        self.config = config
         self.progress_tracker = RealtimeProgressTracker(update_callback=self._on_progress_update)
         self.live_logger = LiveLogger(display_lines=15)
         self.resource_monitor = ResourceMonitor()
-        self.output_explorer = OutputExplorer(output_dirs or [Path("./output_csvs")])
+        
+        # Use config for default output directory if not specified
+        if not output_dirs and config:
+            default_output = config.get('default_output_dir', './output_csvs')
+            output_dirs = [Path(default_output)]
+        elif not output_dirs:
+            output_dirs = [Path("./output_csvs")]
+            
+        self.output_explorer = OutputExplorer(output_dirs)
         self.statistics_dashboard = StatisticsDashboard()
         
         # Current view
@@ -165,10 +174,7 @@ class UnifiedMonitor:
         cpu = resource_summary['cpu_percent']
         mem = resource_summary['memory_percent']
         
-        header_content = Text()
-        header_content.append(tabs_text)
-        header_content.append(f"\n[dim]CPU: {cpu:.1f}% | MEM: {mem:.1f}% | ", style="dim")
-        header_content.append(f"Files: {self.statistics_dashboard.global_stats.total_files_processed}", style="green")
+        header_content = f"{tabs_text}\n[dim]CPU: {cpu:.1f}% | MEM: {mem:.1f}% | [/dim][green]Files: {self.statistics_dashboard.global_stats.total_files_processed}[/green]"
         
         return Panel(header_content, box=box.DOUBLE, style="bold cyan")
     
@@ -194,13 +200,11 @@ class UnifiedMonitor:
             if recent_errors > 0:
                 status_parts.append(f"[red]Recent Errors: {recent_errors}[/red]")
         
-        footer_text = Text()
-        footer_text.append(shortcuts_text)
+        footer_content = shortcuts_text
         if status_parts:
-            footer_text.append("\n")
-            footer_text.append(" | ".join(status_parts))
+            footer_content += "\n" + " | ".join(status_parts)
         
-        return Panel(footer_text, box=box.SINGLE, style="dim")
+        return Panel(footer_content, box=box.SIMPLE, style="dim")
     
     def _create_dashboard_view(self) -> Layout:
         """Create dashboard view combining multiple components"""

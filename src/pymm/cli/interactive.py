@@ -113,7 +113,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v9.0.1[/dim]"""
+            [dim]Python MetaMap CLI v9.4.0[/dim]"""
 
 
 class EnhancedResourceMonitor:
@@ -1538,13 +1538,13 @@ Mode: {'Ultra' if file_count > 500 else 'Standard'}"""
         
         # Show initial message
         console.print(Panel(
-            "[bold cyan]Starting Enhanced Processing Monitor[/bold cyan]\n\n"
+            "[bold cyan]Starting Processing Monitor[/bold cyan]\n\n"
             "Features:\n"
-            "• Real-time progress bars for each file\n"
-            "• Live logging with filtering\n"
-            "• Resource usage monitoring\n"
-            "• Output file explorer\n"
-            "• Global statistics dashboard\n\n"
+            "- Real-time progress bars for each file\n"
+            "- Live logging with filtering\n"
+            "- Resource usage monitoring\n"
+            "- Output file explorer\n"
+            "- Global statistics dashboard\n\n"
             "[dim]The monitor will start automatically...[/dim]",
             box=box.DOUBLE,
             style="cyan"
@@ -3584,43 +3584,44 @@ Output Directory: {output_path}"""
         console.print(f"\n[green]Started background job: {job_id}[/green]")
     
     def monitor(self):
-        """Launch enhanced real-time monitoring system"""
+        """Launch real-time monitoring system"""
         self.clear_screen()
         console.print(Panel(
-            "[bold cyan]Enhanced Real-Time Monitor[/bold cyan]\n\n"
-            "Complete monitoring solution with live updates",
+            "[bold cyan]Real-Time Monitor[/bold cyan]\n\n"
+            "Comprehensive monitoring with live updates",
             box=box.DOUBLE,
             style="cyan"
         ))
         
-        console.print("\n[bold]🚀 New Features:[/bold]")
-        console.print("• [green]Real-time progress bars[/green] - Live updates for each file")
-        console.print("• [yellow]Live logging[/yellow] - Filter and search logs in real-time")
-        console.print("• [blue]Resource monitoring[/blue] - CPU, memory, disk, network usage")
-        console.print("• [magenta]Output explorer[/magenta] - Browse results as they're created")
-        console.print("• [cyan]Statistics dashboard[/cyan] - Global processing metrics")
+        console.print("\n[bold]Features:[/bold]")
+        console.print("- [green]Real-time progress tracking[/green] - Live updates for each file")
+        console.print("- [yellow]Live logging system[/yellow] - Filter and search logs in real-time")
+        console.print("- [blue]Resource monitoring[/blue] - CPU, memory, disk, network usage")
+        console.print("- [magenta]Output file explorer[/magenta] - Browse results as they're created")
+        console.print("- [cyan]Statistics dashboard[/cyan] - Global processing metrics")
         
-        console.print("\n[bold]📍 Navigation:[/bold]")
-        console.print("• Press [bold]d[/bold] for Dashboard view")
-        console.print("• Press [bold]p[/bold] for Progress tracking")
-        console.print("• Press [bold]l[/bold] for Live logs")
-        console.print("• Press [bold]r[/bold] for Resources")
-        console.print("• Press [bold]f[/bold] for Files explorer")
-        console.print("• Press [bold]s[/bold] for Statistics")
-        console.print("• Press [bold]q[/bold] to quit")
+        console.print("\n[bold]Navigation:[/bold]")
+        console.print("- Press [bold]d[/bold] for Dashboard view")
+        console.print("- Press [bold]p[/bold] for Progress tracking")
+        console.print("- Press [bold]l[/bold] for Live logs")
+        console.print("- Press [bold]r[/bold] for Resources")
+        console.print("- Press [bold]f[/bold] for Files explorer")
+        console.print("- Press [bold]s[/bold] for Statistics")
+        console.print("- Press [bold]q[/bold] to quit")
         
         console.print("\n[dim]Note: This monitor can also be used during batch processing[/dim]")
         
-        if not Confirm.ask("\nLaunch enhanced monitor?", default=True):
+        if not Confirm.ask("\nLaunch monitor?", default=True):
             return
         
         try:
-            # Create and start the enhanced monitor
-            monitor = EnhancedMonitor([self.config.get('default_output_dir', './output_csvs')])
+            # Create and start the monitor
+            output_dir = self.config.get('default_output_dir', './output_csvs')
+            monitor = EnhancedMonitor([output_dir], config=self.config)
             
-            # Add some sample log entries for demonstration
-            monitor.log("INFO", "Monitor", "Enhanced monitoring system started")
-            monitor.log("INFO", "System", f"Monitoring output directory: {self.config.get('default_output_dir', './output_csvs')}")
+            # Add initial log entries
+            monitor.log("INFO", "Monitor", "Monitoring system started")
+            monitor.log("INFO", "System", f"Monitoring output directory: {output_dir}")
             
             # Start the monitor
             monitor.start()

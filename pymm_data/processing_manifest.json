@@ -1,100 +1,100 @@
 {
   "version": "1.0",
-  "created": "2025-07-10T12:09:37.767400",
-  "last_updated": "2025-07-10T12:09:47.522495",
+  "created": "2025-07-10T12:37:09.585768",
+  "last_updated": "2025-07-10T12:37:27.766030",
   "files": {
     "test_1.txt": {
       "input_path": "pymm_data/input/test_1.txt",
       "output_path": "pymm_data/output/test_1_processed.csv",
       "input_hash": "a7f1c6f53e1874adece640d29f4c5914",
-      "process_date": "2025-07-10T12:09:37.895174",
+      "process_date": "2025-07-10T12:37:18.479626",
       "file_size": 57,
       "status": "completed",
       "error_message": null,
-      "concepts_found": 38,
-      "processing_time": 1.6422030925750732
+      "concepts_found": 6,
+      "processing_time": 1.2370002269744873
     },
     "test_2.txt": {
       "input_path": "pymm_data/input/test_2.txt",
       "output_path": "pymm_data/output/test_2_processed.csv",
       "input_hash": "540dcac6eff0a9d80aea8678de814dd2",
-      "process_date": "2025-07-10T12:09:39.538242",
+      "process_date": "2025-07-10T12:37:19.717136",
       "file_size": 44,
       "status": "completed",
       "error_message": null,
-      "concepts_found": 15,
-      "processing_time": 1.2435650825500488
+      "concepts_found": 6,
+      "processing_time": 1.190178394317627
     },
     "test_3.txt": {
       "input_path": "pymm_data/input/test_3.txt",
       "output_path": "pymm_data/output/test_3_processed.csv",
       "input_hash": "bce7f969b6632bc818b74c0bbd79d4ad",
-      "process_date": "2025-07-10T12:09:40.783775",
+      "process_date": "2025-07-10T12:37:20.910625",
       "file_size": 32,
       "status": "completed",
       "error_message": null,
-      "concepts_found": 17,
-      "processing_time": 1.1675944328308105
+      "concepts_found": 5,
+      "processing_time": 1.2111375331878662
     },
     "test_4.txt": {
       "input_path": "pymm_data/input/test_4.txt",
       "output_path": "pymm_data/output/test_4_processed.csv",
       "input_hash": "5c30e9328331d7b34199fa701aac0fe4",
-      "process_date": "2025-07-10T12:09:41.952964",
+      "process_date": "2025-07-10T12:37:22.124135",
       "file_size": 35,
       "status": "completed",
       "error_message": null,
-      "concepts_found": 21,
-      "processing_time": 1.1611454486846924
+      "concepts_found": 8,
+      "processing_time": 1.1776506900787354
     },
     "test_5.txt": {
       "input_path": "pymm_data/input/test_5.txt",
       "output_path": "pymm_data/output/test_5_processed.csv",
       "input_hash": "ac50cac2bf5bf1b2dc381d295a9dcae2",
-      "process_date": "2025-07-10T12:09:43.116056",
+      "process_date": "2025-07-10T12:37:23.305187",
       "file_size": 37,
       "status": "completed",
       "error_message": null,
-      "concepts_found": 17,
-      "processing_time": 1.060105562210083
+      "concepts_found": 4,
+      "processing_time": 1.068347692489624
     },
     "test_6.txt": {
       "input_path": "pymm_data/input/test_6.txt",
       "output_path": "pymm_data/output/test_6_processed.csv",
       "input_hash": "42a1aa2a69e12a7275dc1ee1215aa022",
-      "process_date": "2025-07-10T12:09:44.178738",
+      "process_date": "2025-07-10T12:37:24.376178",
       "file_size": 37,
       "status": "completed",
       "error_message": null,
-      "concepts_found": 25,
-      "processing_time": 1.2556545734405518
+      "concepts_found": 5,
+      "processing_time": 1.2844905853271484
     },
     "test_7.txt": {
       "input_path": "pymm_data/input/test_7.txt",
       "output_path": "pymm_data/output/test_7_processed.csv",
       "input_hash": "feaf64ccec8fc2dd316a5ed4ca660020",
-      "process_date": "2025-07-10T12:09:45.436742",
+      "process_date": "2025-07-10T12:37:25.661895",
       "file_size": 39,
       "status": "completed",
       "error_message": null,
-      "concepts_found": 12,
-      "processing_time": 1.0475661754608154
+      "concepts_found": 5,
+      "processing_time": 1.05194091796875
     },
     "test_8.txt": {
       "input_path": "pymm_data/input/test_8.txt",
       "output_path": "pymm_data/output/test_8_processed.csv",
       "input_hash": "cf9097e5b89632d14c90ecc77a2a8188",
-      "process_date": "2025-07-10T12:09:46.486493",
+      "process_date": "2025-07-10T12:37:26.716939",
       "file_size": 40,
       "status": "completed",
       "error_message": null,
-      "concepts_found": 8,
-      "processing_time": 1.0383472442626953
+      "concepts_found": 4,
+      "processing_time": 1.051069736480713
     }
   },
   "statistics": {
     "total_processed": 8,
     "total_failed": 0,
-    "total_concepts": 153
+    "total_concepts": 43
   }
 }
