@@ -3368,7 +3368,12 @@ Output Directory: {output_path}"""
         console.print("\n[bold]Server Statistics[/bold]")
         
         # Get server status
-        status = self.server_manager.check_server_status()
+        tagger_running = self.server_manager.is_tagger_server_running()
+        wsd_running = self.server_manager.is_wsd_server_running()
+        status = {
+            'tagger': tagger_running,
+            'wsd': wsd_running
+        }
         
         # Create statistics table
         stats_table = Table(box=box.ROUNDED)
