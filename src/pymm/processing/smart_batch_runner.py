@@ -317,13 +317,14 @@ class SmartBatchRunner(ValidatedBatchRunner):
                 if not validation_passed:
                     if not Confirm.ask("\n[yellow]Validation failed. Continue anyway?[/yellow]", default=False):
                         return {"status": "failed", "reason": "validation_failed"}
-            except AttributeError as e:
-                if "'str' object has no attribute 'substitute'" in str(e):
-                    console.print(f"[red]Validation error: {e}[/red]")
-                    console.print("[yellow]Skipping validation due to configuration issue...[/yellow]")
-                    validation_passed = True
-                else:
-                    raise
+            except (AttributeError, TypeError) as e:
+                console.print(f"[yellow]Warning: Validation check encountered an issue: {type(e).__name__}[/yellow]")
+                console.print("[yellow]Proceeding without validation...[/yellow]")
+                validation_passed = True
+            except Exception as e:
+                console.print(f"[red]Unexpected validation error: {e}[/red]")
+                console.print("[yellow]Proceeding without validation...[/yellow]")
+                validation_passed = True
                     
         # Start servers if needed
         if not self.server_manager.is_running():

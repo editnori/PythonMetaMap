@@ -3486,24 +3486,32 @@ Output Directory: {output_path}"""
         # Look for log files
         metamap_home = self.config.get('metamap_home')
         if metamap_home:
-            log_dir = Path(metamap_home) / 'logs'
-            if log_dir.exists():
-                log_files = list(log_dir.glob("*.log"))
+            # Check multiple possible log locations
+            possible_log_dirs = [
+                Path(metamap_home) / 'logs',
+                Path(metamap_home).parent / 'logs',
+                Path(metamap_home) / 'MedPost-SKR' / 'Tagger_server' / 'log',
+                Path(metamap_home) / 'WSD_Server' / 'log'
+            ]
+            
+            log_files = []
+            for log_dir in possible_log_dirs:
+                if log_dir.exists():
+                    log_files.extend(list(log_dir.glob("*.log")))
+            
+            if log_files:
+                # Show recent log entries
+                recent_log = max(log_files, key=lambda f: f.stat().st_mtime)
+                console.print(f"\nViewing: {recent_log.name}")
+                console.print(f"[dim]From: {recent_log.parent}[/dim]")
+                console.print("[dim]Last 20 lines:[/dim]\n")
                 
-                if log_files:
-                    # Show recent log entries
-                    recent_log = max(log_files, key=lambda f: f.stat().st_mtime)
-                    console.print(f"\nViewing: {recent_log.name}")
-                    console.print("[dim]Last 20 lines:[/dim]\n")
-                    
-                    with open(recent_log) as f:
-                        lines = f.readlines()[-20:]
-                        for line in lines:
-                            console.print(f"  {line.rstrip()}")
-                else:
-                    console.print("[yellow]No log files found[/yellow]")
+                with open(recent_log) as f:
+                    lines = f.readlines()[-20:]
+                    for line in lines:
+                        console.print(f"  {line.rstrip()}")
             else:
-                console.print("[yellow]Log directory not found[/yellow]")
+                console.print("[yellow]No log files found in any of the expected locations[/yellow]")
         else:
             console.print("[yellow]MetaMap home not configured[/yellow]")
             
