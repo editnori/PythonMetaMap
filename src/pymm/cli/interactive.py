@@ -110,7 +110,7 @@ CLAUDE_BANNER = """[bold bright_cyan on black]
 ║  ╚═╝        ╚═╝   ╚═╝     ╚═╝╚═╝     ╚═╝     ╚═════╝╚══════╝╚═╝         ║
 ║                                                                         ║
 ╚═════════════════════════════════════════════════════════════════════════╝[/bold bright_cyan on black]
-            [dim]Advanced Medical Text Processing Suite v8.8.9[/dim]"""
+            [dim]Advanced Medical Text Processing Suite v9.0.0[/dim]"""
 
 
 class EnhancedResourceMonitor:
