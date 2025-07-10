@@ -3,9 +3,17 @@
 import os
 import sys
 
+# Block scipy modules before any imports
+sys.modules['scipy'] = None
+sys.modules['scipy.stats'] = None
+sys.modules['scipy.special'] = None
+sys.modules['scipy.spatial'] = None
+sys.modules['seaborn'] = None
+
 # Disable analysis features
 os.environ['PYMM_NO_SCIPY'] = '1'
 os.environ['PYMM_NO_ANALYSIS'] = '1'
+os.environ['MPLBACKEND'] = 'Agg'
 
 def main():
     """Main entry point for simplified CLI"""

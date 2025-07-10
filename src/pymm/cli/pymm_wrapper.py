@@ -17,9 +17,9 @@ os.environ['MPLBACKEND'] = 'Agg'
 def main():
     """Run pymm CLI with scipy blocked"""
     try:
-        # Import after blocking scipy - use main_simple to avoid scipy imports
-        from pymm.cli.main_simple import main as cli_main
-        return cli_main()
+        # Import after blocking scipy
+        from pymm.cli.main import main
+        return main()
     except Exception as e:
         error_str = str(e)
         if "numpy.dtype size changed" in error_str or "numpy.ufunc size changed" in error_str:
