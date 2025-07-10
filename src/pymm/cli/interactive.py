@@ -1832,6 +1832,13 @@ Throughput: {throughput:.2f} files/s"""
             
             if result['status'] == 'completed':
                 console.print(f"\n[green]Successfully processed {result['processed']} files![/green]")
+            elif result['status'] == 'started_background':
+                console.print(f"\n[green]Background processing started for {result['files']} files[/green]")
+                console.print("[dim]Check progress with the monitoring tool[/dim]")
+            elif result['status'] == 'cancelled':
+                console.print(f"\n[yellow]{result.get('reason', 'Processing cancelled')}[/yellow]")
+            elif result['status'] == 'failed':
+                console.print(f"\n[red]Processing failed: {result.get('reason', 'Unknown error')}[/red]")
             
             input("\nPress Enter to continue...")
             return

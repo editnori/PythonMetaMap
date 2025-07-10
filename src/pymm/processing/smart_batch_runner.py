@@ -409,17 +409,21 @@ runner.process_files_with_tracker(files)
             
             # Start background process using nohup
             log_file = self.tracker.base_dir / "logs" / f"background_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-            log_file.parent.mkdir(exist_ok=True)
+            log_file.parent.mkdir(exist_ok=True, parents=True)
             
             cmd = ["nohup", sys.executable, str(script_path)]
-            with open(log_file, 'w') as log:
-                process = subprocess.Popen(
-                    cmd,
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                    cwd=str(self.tracker.base_dir)
-                )
+            try:
+                with open(str(log_file), 'w') as log:
+                    process = subprocess.Popen(
+                        cmd,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                        cwd=str(self.tracker.base_dir)
+                    )
+            except Exception as e:
+                console.print(f"[red]Failed to start background process: {e}[/red]")
+                raise
             
             console.print(f"[green]Background process started with PID: {process.pid}[/green]")
             console.print(f"[dim]Log file: {log_file}[/dim]")
